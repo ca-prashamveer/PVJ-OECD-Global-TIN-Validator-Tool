@@ -617,7 +617,7 @@
                         <p class="text-sm text-slate-400 mt-1">Click anywhere in this panel to choose a file · first sheet is used · data never leaves this browser</p>
                     </div>
                     <div class="mt-5 grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
-                        <div class="rounded-lg border border-white/10 bg-slate-900/30 p-3 text-slate-300"><b class="text-white">Required headers</b><br>Exact header names are checked before processing.</div>
+                        <div class="rounded-lg border border-white/10 bg-slate-900/30 p-3 text-slate-300"><b class="text-white">Required headers</b><br>Exact header names UCIC, Individual or Entity, Country of Tax Residence, CTR code, TIN value, TIN validation remarks, TIN Modification Remarks, TIN Value Modified, TIN validation remarks on Modified TIN value, these header are mandatory & checked before processing.</div>
                         <div class="rounded-lg border border-white/10 bg-slate-900/30 p-3 text-slate-300"><b class="text-white">Safe correction</b><br>Only punctuation and whitespace edits are suggested; source values remain unchanged.</div>
                         <div class="rounded-lg border border-white/10 bg-slate-900/30 p-3 text-slate-300"><b class="text-white">Scale-aware UI</b><br>Progressive processing and a capped preview keep the dashboard responsive.</div>
                     </div>
@@ -678,7 +678,7 @@
 
         <footer id="dashboard-footer" class="w-full py-4 text-center z-40 border-t border-white/10 bg-slate-900/90 backdrop-blur-md mt-auto">
             <p class="text-slate-300 text-sm md:text-base font-medium tracking-wide">
-                Developed by CA. Prasham Veer Jain <span class="mx-2 text-slate-500">|</span> <span class="text-slate-400">Latest update: July 16, 2026</span>
+                Developed by CA. Prasham Veer Jain <span class="mx-2 text-slate-500">|</span> <span class="text-slate-400">Enterprise Edition Version V2.0</span>
             </p>
         </footer>
     </div>
@@ -702,21 +702,21 @@ Characters 7 to 9 indicate the issuing order of the TIN within the above-mention
 10th character is a check digit (capital letter), calculated according to a formula that depends on the first 9 characters."
 4	Algeria	DZ	NA	NA	No format prescribed as per OECD	Details are not available on the OECD Website for the Tax Identification Number (TIN)	No format prescribed as per OECD	Details are not available on the OECD Website for the Tax Identification Number (TIN)
 5	American Samoa	AS	NA	NA	No format prescribed as per OECD	Details are not available on the OECD Website for the Tax Identification Number (TIN)	No format prescribed as per OECD	Details are not available on the OECD Website for the Tax Identification Number (TIN)
-6	Andorra	AD	Yes	No	"F-999999-Z,
-E-999999-Z"	"F-123456-Z
+6	Andorra	AD	Yes	No	"F-999999-A,
+E-999999-A"	"F-123456-Z
 F + 6 digits + 1 control letter
 Resident - Número d’Identificació Administrativa (NIA) preceded by a letter “F”.
 
 E-123456-Z
-E + 6 digits + 1 control letter - Non-resident"	"A-999999-Z,
-L-999999-Z,
-E-999999-Z,
-C-999999-Z,
-D-999999-Z,
-G-999999-Z,
-O-999999-Z,
-P-999999-Z,
-U-999999-Z"	"A-123456-Z - A + 6 digits + 1 control letter - Limited company (societat anònima)
+E + 6 digits + 1 control letter - Non-resident"	"A-999999-A,
+L-999999-A,
+E-999999-A,
+C-999999-A,
+D-999999-A,
+G-999999-A,
+O-999999-A,
+P-999999-A,
+U-999999-A"	"A-123456-Z - A + 6 digits + 1 control letter - Limited company (societat anònima)
 L-123456-Z - L + 6 digits + 1 control letter - Private limited company (societat limitada)
 E-123456-Z - E + 6 digits + 1 control letter - Non-resident legal entities (including legal persons)
 
@@ -734,12 +734,12 @@ U-123456-Z - U + 6 digits + 1 control letter - Parapublic entities"
 10	Antigua and Barbuda	AG	No	No	99999999	"This section contains information on the alphanumeric structure of the TIN, the use of slashed, capital letter, hyphens, etc. In addition, please outline the meaning given to the numbers and letters that make up the TIN (including for instance the use of check digits).
 TINs are assigned at the end of the registration process by our Tax Administration software (SIGTAS), with the smallest number being 6 digits. TINs only contain numbers. Check digits are only incorporated for Taxpayers that are registered to pay VAT(ABST). For Tax account numbers, the IRD's software assigns the tax account numbers by attaching the tax type code(a 2-digit number) to the end of the TIN. *Therefore a tax account number will be a minimum of 8 digits*"	99999999	"This section contains information on the alphanumeric structure of the TIN, the use of slashed, capital letter, hyphens, etc. In addition, please outline the meaning given to the numbers and letters that make up the TIN (including for instance the use of check digits).
 TINs are assigned at the end of the registration process by our Tax Administration software (SIGTAS), with the smallest number being 6 digits. TINs only contain numbers. Check digits are only incorporated for Taxpayers that are registered to pay VAT(ABST). For Tax account numbers, the IRD's software assigns the tax account numbers by attaching the tax type code(a 2-digit number) to the end of the TIN. *Therefore a tax account number will be a minimum of 8 digits*"
-11	Argentina	AR	No	No	9999999999	"The CUIT consists of 11 digits:
-- the first 2 digits indicate the person: the numbers 20, 23, 24 or 27 are assigned randomly for individuals on a non-binary basis, and 30 or 33 for legal persons."	9999999999	"The CUIT consists of 11 digits:
+11	Argentina	AR	No	No	"20999999999, 23999999999, 24999999999, 27999999999"	"The CUIT consists of 11 digits:
+- the first 2 digits indicate the person: the numbers 20, 23, 24 or 27 are assigned randomly for individuals on a non-binary basis, and 30 or 33 for legal persons."	"30999999999, 33999999999"	"The CUIT consists of 11 digits:
 - the first 2 digits indicate the person: the numbers 20, 23, 24 or 27 are assigned randomly for individuals on a non-binary basis, and 30 or 33 for legal persons."
 12	Armenia	AM	Yes	Yes	99999999	"TIN consists of 8 digits; no other symbols could be used. First seven digits are next serial number, 8th digit is check digit and calculated based on the previous 7 digits. No meaning is given to the numbers."	99999999	"TIN consists of 8 digits; no other symbols could be used. First seven digits are next serial number, 8th digit is check digit and calculated based on the previous 7 digits. No meaning is given to the numbers."
 13	Aruba	AW	No	No	99999999	The TIN is generated by the automated system after registering certain data of a tax payer and exists of 8 digits.	99999999	The TIN is generated by the automated system after registering certain data of a tax payer and exists of 8 digits.
-14	Australia	AU	No	No	99999999	"The TFN is an eight or nine digit number compiled using a check digit algorithm to allow accurate data capture of the TFN in ATO systems. Generally the TFN is displayed on correspondence as three sets of three numbers (for example XXX XXX XXX) but is stored as an eight or nine number string on internal systems.
+14	Australia	AU	No	No	99999999, 999999999	"The TFN is an eight or nine digit number compiled using a check digit algorithm to allow accurate data capture of the TFN in ATO systems. Generally the TFN is displayed on correspondence as three sets of three numbers (for example XXX XXX XXX) but is stored as an eight or nine number string on internal systems.
 "	99999999999	The ABN is a unique 11 digit number formed from a nine digit unique identifier and two prefix check digits. The two leading digits (the check digits) will be derived from the subsequent nine digits using a modulus 89 check digit calculation. The check digits will be included to identify common data entry errors such as digit transposition. The ABN will be structured as XX XXX XXX XXX.
 15	Austria	AT	No	Yes	"999999999, 99-999/9999"	9 digits; 99-999/9999; Comments - The hyphen and the slash are not mandatory in all cases (eg for the purpose of IT processing they should be omitted)	999999999	9 digits
 16	Azerbaijan	AZ	No	Yes	"9999999992, 9AAA9AA"	"TIN is a ten-digit code, where the first two digits characterize code of territorial administrative unit, the following six digits characterize a serial number.
@@ -806,7 +806,7 @@ If the result of the above operation matches the check digit, the TIN structure 
 1.  If it is equal to the result it is between 1 and 9;
 2. K if the result is 10;
 3. 0 (zero) if the result is 11."
-47	China	CN	Yes	No	"999999999999999999, 99999999999999999A, C99999999999999999, C9999999999999999A, W99999999999999999, W9999999999999999A, J99999999999999, H99999999999999999, H9999999999999999A, M99999999999999999, M9999999999999999A, T99999999999999999, T9999999999999999A"	"For an individual using Chinese ID card as its identification, TIN is its ID number which consists of 18 characters. For an individual using passport or other ID certificate as its identification, TIN is assigned in the following format. In some areas, passport numbers are also recognized as TIN for foreign individuals.
+47	China	CN	Yes	No	"999999999999999999, 99999999999999999x, C99999999999999999, C9999999999999999x, W99999999999999999, W9999999999999999x, J99999999999999, H99999999999999999, H9999999999999999x, M99999999999999999, M9999999999999999x, T99999999999999999, T9999999999999999x"	"For an individual using Chinese ID card as its identification, TIN is its ID number which consists of 18 characters. For an individual using passport or other ID certificate as its identification, TIN is assigned in the following format. In some areas, passport numbers are also recognized as TIN for foreign individuals.
 
 Type of taxpayer, TIN Format and its Explanation 
 1.	Individual (using Chinese ID card as its identification)
@@ -833,7 +833,7 @@ b.	Explanation – First character is “T” followed by 17 numerals or 16 nume
 For the old TIN regime, there are 15 numerals. While for the new TIN regime, there are 18 numerals with sometimes letters appearing in the last 10 characters, especially the 9th, 10th, 13rd and 18th."
 48	Christmas Island	CX	NA	NA	No format prescribed as per OECD	Details are not available on the OECD Website for the Tax Identification Number (TIN)	No format prescribed as per OECD	Details are not available on the OECD Website for the Tax Identification Number (TIN)
 49	Cocos (Keeling) Islands	CC	NA	NA	No format prescribed as per OECD	Details are not available on the OECD Website for the Tax Identification Number (TIN)	No format prescribed as per OECD	Details are not available on the OECD Website for the Tax Identification Number (TIN)
-50	Colombia	CO	No	No	9999999999	"For individuals, the Tax Identification Number – TIN consist of 1 and up to 13 digits plus a verification digit included by the National Tax and Customs Directorate (DIAN). The configuration of the Tax Identification Number is as follows:
+50	Colombia	CO	No	No	99, 999, 9999, 99999, 999999, 9999997, 99999999, 999999999, 9999999999, 99999999999, 999999999999, 9999999999999, 99999999999999	"For individuals, the Tax Identification Number – TIN consist of 1 and up to 13 digits plus a verification digit included by the National Tax and Customs Directorate (DIAN). The configuration of the Tax Identification Number is as follows:
 For citizenship cards with identification numbers in the range of 1 to 99999999, the TIN corresponds to the same number of the citizenship card plus a verification digit.
 For the identification types of identity card and civil registry, issued prior to the Unique Personal Identification Number (NUIP), a TIN is assigned in the numerical range between 700000001 to 799999999, plus a verification digit.
 For individuals with a nationality other than Colombian, identified with types of identification documents such as passport, foreigner identification, Special Stay Permission (PEP), Temporary Protection Permission (PPT), among others; a TIN is assigned in the numerical range between 600000001 to 799999999, plus a verification digit.
@@ -854,10 +854,10 @@ In the case of foreign natural persons, registration is done with the “Immigra
 9999999999 10 digits Personal Identification Number (Social Security Number) for individuals born in or after 1954.
 699999999 9 digits (first digit is 6) Special (generated) Identification Number is issued to individuals who do not have a Personal Identification Number and to legal entities that do not have a Business Identification Number."	99999999	99999999 8 digits Business Identification Number (number issued by registry office to legal or natural persons for business purposes).
 62	Denmark	DK	Yes	No	999999-9999	"10 digits with a hyphen between the 6th and 7th digit.
-The last digit is a check digit. The last digit also indicates whether the person is female og male. An even number is a female – an odd number is a male"	99999999	"8 digits - CVR or SE number.
+The last digit is a check digit. The last digit also indicates whether the person is female og male. An even number is a female – an odd number is a male"	99999999, CVR 99999999, SE 99999999	"8 digits - CVR or SE number.
 “CVR” or “SE” is often placed in front of the number e.g. CVR 99999999 or SE 99999999. In some situations, a company can have both a CVR number and a SE number."
 63	Djibouti	DJ	NA	NA	No format prescribed as per OECD	Details are not available on the OECD Website for the Tax Identification Number (TIN)	No format prescribed as per OECD	Details are not available on the OECD Website for the Tax Identification Number (TIN)
-64	Dominica	DM	No	No	9999999	The TIN consists of a maximum of six (6) digits and one (1) check digit.	9999999	The TIN consists of a maximum of six (6) digits and one (1) check digit.
+64	Dominica	DM	No	No	99, 999, 9999, 99999, 999999, 9999999	The TIN consists of a maximum of six (6) digits and one (1) check digit.	99, 999, 9999, 99999, 999999, 9999999	The TIN consists of a maximum of six (6) digits and one (1) check digit.
 65	Dominican Republic	DO	NA	NA	No format prescribed as per OECD	Details are not available on the OECD Website for the Tax Identification Number (TIN)	No format prescribed as per OECD	Details are not available on the OECD Website for the Tax Identification Number (TIN)
 66	Ecuador	EC	No	Yes	"9999999999001, 9999999999001"	"INDIVIDUALS: ECUADORIANS AND FOREIGN RESIDENTS
 Ten digits of the identity or citizenship card: The last three digits are always 001."	"9999999999001, 9969999999001"	"PRIVATE COMPANIES AND NON-RESIDENT FOREIGN INDIVIDUALS (NON-HOLDERS OF A CARD OF IDENTITY OR CITIZENSHIP)
@@ -1385,7 +1385,7 @@ C3, C4 represent digits in the range 01...12 or in range 51…62.
 C5, C6 represent digits in the range 01...31.
 C7, C8, C9 represent digits in the range 0...9.
 C10 represents digit in n the range 0...9.
-Exception: If the number consisting of the digits C1, C2 is lower than 54, C10 might not be present."	9999999999	"Format Explanation Comment
+Exception: If the number consisting of the digits C1, C2 is lower than 54, C10 might not be present."	999999999, 9999999999	"Format Explanation Comment
 9999999999 10 digits
 999999/999(9) 9 or 10 digits
 For the purpose of IT processing, the TIN should be written as a single block, without any slash sign.
@@ -2330,6 +2330,11 @@ This number is granted by the DNIC (National Direction of Civil Identification),
             let currentIndex = 0;
             const CHUNK_SIZE = 100;
 
+            // FIX: Cancel any ongoing render loop to prevent old data from bleeding into new filters
+            if (window.bulkRenderFrame) {
+                cancelAnimationFrame(window.bulkRenderFrame);
+            }
+
             function renderNextChunk() {
                 const fragment = document.createDocumentFragment();
                 const end = Math.min(currentIndex + CHUNK_SIZE, filteredRows.length);
@@ -2371,9 +2376,12 @@ This number is granted by the DNIC (National Direction of Civil Identification),
                 }
                 preview.appendChild(fragment);
                 currentIndex = end;
-                if (currentIndex < filteredRows.length) requestAnimationFrame(renderNextChunk);
+                if (currentIndex < filteredRows.length) {
+                    window.bulkRenderFrame = requestAnimationFrame(renderNextChunk);
+                }
             }
-            requestAnimationFrame(renderNextChunk);
+            // FIX: Store the frame ID so it can be cancelled if the user clicks a filter
+            window.bulkRenderFrame = requestAnimationFrame(renderNextChunk);
         }
 
         window.downloadBulkOutput = function() {
