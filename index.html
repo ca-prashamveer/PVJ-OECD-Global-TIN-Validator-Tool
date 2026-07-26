@@ -2,7 +2,8 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <!-- A-1: pinch-zoom must not be blocked (WCAG 2.2 §1.4.4 Resize Text) -->
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#0f172a">
     <meta name="background-color" content="#0f172a">
     <meta name="application-name" content="OECD TIN Validator">
@@ -29,15 +30,14 @@
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     
-    <!-- TomSelect (Dropdown) -->
+    <!-- TomSelect (Dropdown) — P4-6: deferred so it does not block parse -->
     <link href="https://cdn.jsdelivr.net/npm/tom-select@2.2.2/dist/css/tom-select.css" rel="stylesheet">
-    <script src="https://cdn.jsdelivr.net/npm/tom-select@2.2.2/dist/js/tom-select.complete.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/tom-select@2.2.2/dist/js/tom-select.complete.min.js"></script>
 
-    <!-- html2canvas for Print Screen (JPEG output) -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <!-- P4-5: html2canvas (~200 KB) is used only by executeExport('jpg'); it is now loaded on first use. -->
 
-    <!-- SheetJS: browser-side XLSX/XLSB import and export -->
-    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <!-- SheetJS: browser-side XLSX/XLSB import and export — P4-6: deferred -->
+    <script defer src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 
     <style>
         body {
@@ -265,7 +265,12 @@
         .canvas-layout .bg-clip-text { background: none !important; -webkit-text-fill-color: #60a5fa !important; color: #60a5fa !important; }
         .mode-tab[aria-selected="true"] { background: linear-gradient(135deg, #2563eb, #4f46e5); color: #fff; box-shadow: 0 8px 20px -10px #2563eb; }
         .bulk-dropzone.dragover { border-color: #38bdf8; background: rgba(14, 165, 233, .12); transform: scale(1.01); }
-        .bulk-table-wrap { max-height: 420px; overflow: auto; }
+        /* A-7: the dropzone is role="button" tabindex="0" — it needs a visible focus ring */
+        .bulk-dropzone:focus-visible { outline: 3px solid #38bdf8; outline-offset: 3px; }
+        /* R-3 + P1-C: fluid scroller height, and containment scopes layout/paint invalidation to the scroller */
+        .bulk-table-wrap { max-height: min(60vh, 620px); overflow: auto; contain: content; }
+        /* P1-C: a fixed row height is what makes the virtual-window arithmetic exact */
+        .bulk-table td { height: 37px; }
         .bulk-table th { position: sticky; top: 0; z-index: 1; }
 
         /* Scrollbar Styling */
@@ -273,7 +278,64 @@
         .bulk-table-wrap::-webkit-scrollbar-track { background: rgba(255, 255, 255, 0.05); border-radius: 4px; }
         .bulk-table-wrap::-webkit-scrollbar-thumb { background: rgba(56, 189, 248, 0.5); border-radius: 4px; }
         .bulk-table-wrap::-webkit-scrollbar-thumb:hover { background: rgba(56, 189, 248, 0.8); }
-        .bulk-table th { background-color: #0f172a; box-shadow: 0 1px 0 rgba(255,255,255,0.1); } 
+        .bulk-table th { background-color: #0f172a; box-shadow: 0 1px 0 rgba(255,255,255,0.1); }
+
+        /* R-4: below 1024px drop "Country of Tax Residence" (derivable from CTR Code)
+           and "Modification Remarks" (the longest column) so the table stops forcing
+           a ~1,400px horizontal scroll inside a vertical scroller. Both columns remain
+           in every export. */
+        @media (max-width: 1023px) {
+            .bulk-table th:nth-child(3), .bulk-table td:nth-child(3),
+            .bulk-table th:nth-child(7), .bulk-table td:nth-child(7) { display: none; }
+        }
+
+        /* R-8 / A-10: stop the orbs compositing while a bulk run holds the main thread,
+           and respect the user's reduced-motion preference throughout. */
+        .bulk-busy .bg-orb { animation-play-state: paused; }
+        @media (prefers-reduced-motion: reduce) {
+            .bg-orb { animation: none; }
+            *, ::before, ::after {
+                animation-duration: .01ms !important;
+                animation-iteration-count: 1 !important;
+                transition-duration: .01ms !important;
+            }
+        }
+
+        /* Timer Widget Styling */
+        #bulk-timer-widget {
+            position: fixed;
+            bottom: 100px;
+            right: 20px;
+            background: linear-gradient(135deg, #0ea5e9, #06b6d4);
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            border-radius: 12px;
+            padding: 16px;
+            box-shadow: 0 20px 40px rgba(14, 165, 233, 0.3);
+            z-index: 1000;
+            min-width: 240px;
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+        }
+        #bulk-timer-widget.hidden {
+            display: none !important;
+        }
+        #bulk-timer-display {
+            font-size: 32px;
+            font-weight: bold;
+            color: #fff;
+            font-family: 'Courier New', monospace;
+            text-align: center;
+            letter-spacing: 2px;
+        }
+        #bulk-timer-label {
+            font-size: 12px;
+            color: rgba(255, 255, 255, 0.8);
+            text-align: center;
+            margin-top: 8px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-weight: 600;
+        }
 
 /* --- Enhanced High-Contrast Light Theme --- */
         
@@ -341,6 +403,11 @@
         body.light-mode .text-slate-200 { color: #334155 !important; }
         body.light-mode .text-blue-400 { color: #1d4ed8 !important; }
         body.light-mode .text-blue-300 { color: #2563eb !important; }
+        /* Timing chips in the results summary — the 300-level shades are unreadable on the
+           near-white light-mode card, so drop them to their 700-level equivalents. */
+        body.light-mode .text-cyan-300 { color: #0e7490 !important; }
+        body.light-mode .text-sky-300 { color: #0369a1 !important; }
+        body.light-mode .text-violet-300 { color: #6d28d9 !important; }
         
         /* Ensure specific borders match light mode */
         body.light-mode .border-white\/5, 
@@ -373,7 +440,17 @@
     <div class="bg-orb orb-3"></div>
     
     <!-- Custom Toast Container (replaces alerts) -->
-    <div id="toast-container" class="fixed bottom-4 right-4 z-[9999] flex flex-col gap-2 pointer-events-none"></div>
+    <!-- A-3: two live regions — polite for informational toasts, assertive for errors -->
+    <div class="fixed bottom-4 right-4 z-[9999] flex flex-col gap-2 pointer-events-none">
+        <div id="toast-container" role="status" aria-live="polite" aria-atomic="false" class="flex flex-col gap-2"></div>
+        <div id="toast-container-alert" role="alert" aria-live="assertive" aria-atomic="false" class="flex flex-col gap-2"></div>
+    </div>
+
+    <!-- Floating Timer Widget for Bulk Validation -->
+    <div id="bulk-timer-widget" class="hidden">
+        <div id="bulk-timer-display">00:00</div>
+        <div id="bulk-timer-label">Validation Running</div>
+    </div>
 
     <div id="login-modal" class="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/95 backdrop-blur-xl transition-opacity duration-300">
         <div class="glass-card rounded-2xl w-full max-w-md p-8 m-4 shadow-2xl relative overflow-hidden">
@@ -393,15 +470,15 @@
                     <input type="text" id="username" required class="glass-input w-full rounded-lg px-4 py-3" placeholder="Enter your full name">
                 </div>
                 <div>
-                    <label class="block text-sm font-medium text-slate-300 mb-1">Password</label>
+                    <label for="password" class="block text-sm font-medium text-slate-300 mb-1">Password</label>
                     <div class="relative">
-                        <input type="password" id="password" required autocapitalize="none" autocorrect="off" class="glass-input w-full rounded-lg px-4 py-3 pr-12" placeholder="••••••••">
+                        <input type="password" id="password" required autocapitalize="none" autocorrect="off" aria-describedby="login-error" class="glass-input w-full rounded-lg px-4 py-3 pr-12" placeholder="••••••••">
                         <button type="button" id="toggle-password" class="absolute inset-y-0 right-0 px-3 flex items-center text-slate-400 hover:text-white transition-colors" title="Toggle Visibility">
                             <svg id="eye-icon" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg>
                         </button>
                     </div>
                 </div>
-                <div id="login-error" class="hidden text-rose-400 text-sm font-medium bg-rose-500/10 p-3 rounded-lg border border-rose-500/20 text-center">
+                <div id="login-error" role="alert" class="hidden text-rose-400 text-sm font-medium bg-rose-500/10 p-3 rounded-lg border border-rose-500/20 text-center">
                     Invalid credentials. Please try again.
                 </div>
                 <button type="submit" class="w-full py-3 px-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-semibold rounded-lg shadow-lg transition-all transform hover:-translate-y-0.5">
@@ -426,15 +503,17 @@
                     </p>
                 </div>
                 <div class="flex flex-col items-end gap-2 w-full md:w-auto">
-                    <div class="flex flex-col items-end bg-slate-800/50 p-3 rounded-xl border border-white/5 w-full md:w-auto min-w-[300px]">
-                        <div class="flex items-center gap-4 justify-between w-full">
-                            <div class="flex items-center gap-2">
+                    <!-- R-1: min-w-0 below md so a 300px floor cannot overflow a 320px viewport -->
+                    <div class="flex flex-col items-end bg-slate-800/50 p-3 rounded-xl border border-white/5 w-full md:w-auto min-w-0 md:min-w-[300px]">
+                        <!-- R-2: wrap instead of compressing; each control keeps a 44px touch target -->
+                        <div class="flex flex-wrap items-center gap-2 justify-between w-full">
+                            <div class="flex items-center gap-2 min-h-[44px]">
                                 <div class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse no-export"></div>
                                 <span class="text-sm text-slate-300 font-medium">Authorised User: <span id="display-username" class="text-white font-bold"></span></span>
                             </div>
-                            <button id="install-btn" class="hidden no-export text-xs bg-emerald-500/20 hover:bg-emerald-500/40 text-emerald-300 px-3 py-1.5 rounded-full transition-colors border border-emerald-500/30 ml-2">Install App</button>
-                            <button id="theme-toggle" type="button" onclick="toggleTheme()" aria-label="Switch to light mode" title="Toggle colour theme" class="no-export inline-flex items-center gap-1.5 text-xs bg-amber-500/20 hover:bg-amber-500/40 text-amber-300 px-3 py-1.5 rounded-full transition-colors border border-amber-500/30 ml-2"><svg id="theme-toggle-icon" class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364-6.364-.707.707M6.343 17.657l-.707.707m12.728 0-.707-.707M6.343 6.343l-.707-.707M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg><span id="theme-toggle-label">Light mode</span></button>
-                            <button onclick="handleLogout()" class="no-export text-xs bg-rose-500/20 hover:bg-rose-500/40 text-rose-300 px-3 py-1.5 rounded-full transition-colors border border-rose-500/30 ml-2">Logout</button>
+                            <button id="install-btn" class="hidden no-export text-xs bg-emerald-500/20 hover:bg-emerald-500/40 text-emerald-300 px-3 py-1.5 rounded-full transition-colors border border-emerald-500/30 min-h-[44px]">Install App</button>
+                            <button id="theme-toggle" type="button" onclick="toggleTheme()" aria-label="Switch to light mode" title="Toggle colour theme" class="no-export inline-flex items-center gap-1.5 text-xs bg-amber-500/20 hover:bg-amber-500/40 text-amber-300 px-3 py-1.5 rounded-full transition-colors border border-amber-500/30 min-h-[44px]"><svg id="theme-toggle-icon" class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364-6.364-.707.707M6.343 17.657l-.707.707m12.728 0-.707-.707M6.343 6.343l-.707-.707M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg><span id="theme-toggle-label">Light mode</span></button>
+                            <button onclick="handleLogout()" class="no-export text-xs bg-rose-500/20 hover:bg-rose-500/40 text-rose-300 px-3 py-1.5 rounded-full transition-colors border border-rose-500/30 min-h-[44px]">Logout</button>
                         </div>
                         <div class="w-full border-t border-white/10 my-1"></div>
                         <div id="live-clock" class="text-xs text-slate-400 font-mono text-right w-full"></div>
@@ -446,10 +525,10 @@
 
         <main id="dashboard-content" class="flex-grow container mx-auto px-4 pb-10 max-w-6xl flex flex-col gap-6 p-4">
             <div class="glass-card rounded-2xl p-2 flex flex-col sm:flex-row gap-2" role="tablist" aria-label="Validation mode">
-                <button id="single-mode-btn" class="mode-tab flex-1 rounded-xl px-5 py-3 text-sm font-bold text-slate-300 transition" role="tab" aria-selected="true" onclick="switchValidationMode('single')">Single TIN validation <span class="block sm:inline text-xs font-normal opacity-75">— one TIN at a time</span></button>
-                <button id="bulk-mode-btn" class="mode-tab flex-1 rounded-xl px-5 py-3 text-sm font-bold text-slate-300 transition hover:bg-white/5" role="tab" aria-selected="false" onclick="switchValidationMode('bulk')">Bulk TIN validation <span class="block sm:inline text-xs font-normal opacity-75">— XLSX / XLSB processing</span></button>
+                <button id="single-mode-btn" class="mode-tab flex-1 rounded-xl px-5 py-3 text-sm font-bold text-slate-300 transition" role="tab" aria-selected="true" aria-controls="single-validation-panel" tabindex="0" onclick="switchValidationMode('single')">Single TIN validation <span class="block sm:inline text-xs font-normal opacity-75">— one TIN at a time</span></button>
+                <button id="bulk-mode-btn" class="mode-tab flex-1 rounded-xl px-5 py-3 text-sm font-bold text-slate-300 transition hover:bg-white/5" role="tab" aria-selected="false" aria-controls="bulk-validation-panel" tabindex="-1" onclick="switchValidationMode('bulk')">Bulk TIN validation <span class="block sm:inline text-xs font-normal opacity-75">— XLSX / XLSB processing</span></button>
             </div>
-            <section id="single-validation-panel" class="flex flex-col gap-8 w-full pt-4">
+            <section id="single-validation-panel" role="tabpanel" tabindex="0" aria-labelledby="single-mode-btn" class="flex flex-col gap-8 w-full pt-4">
             
             <div class="grid grid-cols-1 md:grid-cols-2 gap-6 relative w-full">
                 
@@ -501,14 +580,16 @@
                     <div class="flex-grow flex flex-col justify-center relative">
                         <label class="block text-sm font-medium text-slate-300 mb-2">Enter TIN exactly as provided</label>
                         
-                        <div class="relative flex items-center no-export">
-                            <input type="text" id="tinInput" 
-                                class="glass-input w-full rounded-lg pl-4 pr-[6.5rem] py-4 text-xl font-mono uppercase tracking-widest shadow-inner placeholder:text-slate-500 placeholder:normal-case placeholder:tracking-normal placeholder:font-sans placeholder:text-sm"
+                        <!-- R-6: below 640px the PASTE button drops beneath the field so a 20-character
+                             TIN at text-xl tracking-widest is no longer clipped on a 360px screen. -->
+                        <div class="relative flex flex-col sm:flex-row sm:items-center no-export">
+                            <input type="text" id="tinInput"
+                                class="glass-input w-full rounded-lg pl-4 pr-12 sm:pr-[6.5rem] py-4 text-xl font-mono uppercase tracking-widest shadow-inner placeholder:text-slate-500 placeholder:normal-case placeholder:tracking-normal placeholder:font-sans placeholder:text-sm"
                                 placeholder="Select country first" autocomplete="off">
-                            <div class="absolute right-24 flex items-center pointer-events-none">
+                            <div class="absolute right-3 top-4 sm:right-24 sm:top-auto flex items-center pointer-events-none">
                                 <svg id="input-status-icon" class="h-6 w-6 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" style="display: none;"></svg>
                             </div>
-                            <button onclick="handlePaste()" type="button" class="absolute right-2 px-4 py-2 bg-blue-500/20 hover:bg-blue-500/40 text-blue-300 rounded-md text-sm font-bold tracking-wider transition-colors border border-blue-500/30 shadow-md">
+                            <button onclick="handlePaste()" type="button" class="relative mt-2 w-full sm:mt-0 sm:w-auto sm:absolute sm:right-2 px-4 py-2 min-h-[44px] bg-blue-500/20 hover:bg-blue-500/40 text-blue-300 rounded-md text-sm font-bold tracking-wider transition-colors border border-blue-500/30 shadow-md">
                                 PASTE
                             </button>
                         </div>
@@ -567,7 +648,9 @@
                     </div>
 
                     <div class="bg-slate-800/40 rounded-xl p-4 border border-white/5">
-                        <h4 class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Allowed Formats for <span id="lbl-entity-type" class="text-slate-300"></span> in <span id="lbl-country" class="text-blue-300"></span></h4>
+                        <!-- U-4: eyebrow + subject line reads cleanly however long the country name is -->
+                        <p class="text-xs uppercase tracking-wider text-slate-400 font-bold">Allowed formats</p>
+                        <p class="text-sm text-slate-200 mt-1 mb-3"><span id="lbl-entity-type" class="text-slate-300"></span> <span class="text-slate-500">·</span> <span id="lbl-country" class="text-blue-300"></span></p>
                         <div id="allowed-formats-container" class="flex flex-wrap gap-2"></div>
                     </div>
                 </div>
@@ -601,7 +684,7 @@
             </div>
             </section>
 
-            <section id="bulk-validation-panel" class="hidden space-y-6" aria-labelledby="bulk-title">
+            <section id="bulk-validation-panel" role="tabpanel" tabindex="0" class="hidden space-y-6" aria-labelledby="bulk-title">
                 <div class="glass-card rounded-2xl p-6 md:p-8">
                     <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-5">
                         <div>
@@ -622,27 +705,35 @@
                         <div class="rounded-lg border border-white/10 bg-slate-900/30 p-3 text-slate-300"><b class="text-white">Scale-aware UI</b><br>Progressive processing and a capped preview keep the dashboard responsive.</div>
                     </div>
                 </div>
-                <div id="bulk-header-status" class="hidden"></div>
-                <div id="bulk-progress-card" class="hidden glass-card rounded-2xl p-6">
-                    <div class="flex justify-between text-sm mb-3"><span id="bulk-progress-label" class="text-slate-300">Preparing validation…</span><span id="bulk-progress-percent" class="font-bold text-sky-300">0%</span></div>
+                <!-- A-4: header-validation failures must be announced, not just shown -->
+                <div id="bulk-header-status" role="alert" class="hidden"></div>
+                <!-- A-2: the progress card is the progressbar; aria-valuenow is written alongside the width -->
+                <div id="bulk-progress-card" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-labelledby="bulk-progress-label" class="hidden glass-card rounded-2xl p-6">
+                    <div class="flex justify-between items-center text-sm mb-3">
+                        <div class="flex items-center gap-4">
+                            <span id="bulk-progress-label" class="text-slate-300">Preparing validation…</span>
+                            <div class="hidden md:flex items-center gap-2 px-3 py-1 rounded-lg bg-sky-500/10 border border-sky-500/30">
+                                <span class="text-xs font-bold text-sky-300 uppercase tracking-wider">Time Elapsed:</span>
+                                <span id="bulk-progress-timer" class="text-xs font-mono text-sky-300 font-bold">00:00</span>
+                            </div>
+                        </div>
+                        <div class="flex items-center">
+                            <span id="bulk-progress-percent" class="font-bold text-sky-300">0%</span>
+                            <button id="bulk-cancel-btn" type="button" onclick="cancelBulkValidation()"
+                                    class="ml-3 text-xs font-bold px-3 py-1 rounded-md bg-rose-500/20 text-rose-300 border border-rose-500/30 hover:bg-rose-500/30 transition-colors">Cancel</button>
+                        </div>
+                    </div>
                     <div class="h-2 rounded-full bg-slate-800 overflow-hidden"><div id="bulk-progress-bar" class="h-full w-0 bg-gradient-to-r from-sky-500 to-indigo-500 transition-all"></div></div>
                 </div>
                 <div id="bulk-results" class="hidden glass-card rounded-2xl overflow-hidden">
-                    <div class="p-6 flex flex-col lg:flex-row justify-between lg:items-center gap-4 border-b border-white/10">
-                        <div class="w-full">
-                            <h3 class="font-bold text-white text-lg flex justify-between items-center">
-                                Validation complete
-                                <div class="flex flex-wrap gap-2">
-                                    <button onclick="downloadBulkOutput()" class="rounded-lg bg-emerald-600 hover:bg-emerald-500 px-4 py-2 text-sm font-bold text-white shadow-lg transition-transform hover:-translate-y-0.5">Export results</button>
-                                    <select id="bulk-export-format" class="glass-input rounded-lg px-3 py-2 text-sm"><option value="xlsx">.xlsx</option><option value="xlsb">.xlsb</option><option value="csv">.csv</option><option value="txt">.txt</option></select>
-                                </div>
-                            </h3>
-                            <div id="bulk-summary" class="w-full mt-2"></div>
-                        </div>
+                    <div class="p-6 border-b border-white/10">
+                        <h3 class="font-bold text-white text-lg">Validation complete</h3>
+                        <div id="bulk-summary" class="w-full mt-2"></div>
                     </div>
-                    
+
                     <!-- Analytics Filter Bar & Search -->
-                    <div class="bg-slate-800/40 border-y border-white/5 px-6 py-3 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                    <!-- U-5: disabled until there is something to filter -->
+                    <div id="bulk-filter-bar" class="bg-slate-800/40 border-y border-white/5 px-6 py-3 flex flex-col md:flex-row md:items-center justify-between gap-4 opacity-50 pointer-events-none">
                         <div class="flex gap-2">
                             <button onclick="applyBulkFilter('all')" id="filter-btn-all" class="text-xs font-bold px-3 py-1.5 rounded-md bg-blue-500/20 text-blue-300 border border-blue-500/30 transition-colors">Show All</button>
                             <button onclick="applyBulkFilter('errors')" id="filter-btn-errors" class="text-xs font-bold px-3 py-1.5 rounded-md bg-slate-700/50 text-slate-400 hover:text-rose-300 transition-colors">Errors Only</button>
@@ -650,26 +741,44 @@
                         </div>
                         <div class="relative w-full md:w-64">
                             <svg class="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
-                            <input type="text" id="bulk-search-input" onkeyup="handleBulkSearch(this.value)" placeholder="Search UCIC or TIN..." class="w-full bg-slate-900/50 border border-white/10 rounded-lg pl-9 pr-3 py-1.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500/50 transition-colors">
+                            <label for="bulk-search-input" class="sr-only">Search UCIC or TIN</label>
+                            <input type="text" id="bulk-search-input" placeholder="Search UCIC or TIN..." class="w-full bg-slate-900/50 border border-white/10 rounded-lg pl-9 pr-3 py-1.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500/50 transition-colors">
                         </div>
                     </div>
+
+                    <!-- §3.5: the export control sits BELOW the filters that determine what it contains,
+                         and its label states the exact row count that will be written to the file. -->
+                    <div class="px-6 py-3 border-b border-white/5 bg-slate-900/20 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <p class="text-xs text-slate-400">The export contains exactly the rows listed below.</p>
+                        <div class="flex flex-wrap gap-2">
+                            <label for="bulk-export-format" class="sr-only">Export file format</label>
+                            <select id="bulk-export-format" class="glass-input rounded-lg px-3 py-2 text-sm"><option value="xlsx">.xlsx</option><option value="xlsb">.xlsb</option><option value="csv">.csv</option><option value="txt">.txt</option></select>
+                            <button onclick="downloadBulkOutput()" class="rounded-lg bg-emerald-600 hover:bg-emerald-500 px-4 py-2 text-sm font-bold text-white shadow-lg transition-transform hover:-translate-y-0.5">Export results</button>
+                        </div>
+                    </div>
+
+                    <!-- A-6: preview repopulation is announced to screen readers -->
+                    <div id="bulk-preview-live" class="sr-only" aria-live="polite"></div>
 
                     <div class="bulk-table-wrap">
                         <table class="bulk-table min-w-full text-left text-xs">
                             <thead class="bg-slate-900/95 text-slate-300">
                                 <tr>
-                                    <th class="px-4 py-3 whitespace-nowrap">UCIC</th>
-                                    <th class="px-4 py-3 whitespace-nowrap">Type</th>
-                                    <th class="px-4 py-3 whitespace-nowrap">Country of Tax Residence</th>
-                                    <th class="px-4 py-3 whitespace-nowrap">CTR Code</th>
-                                    <th class="px-4 py-3 whitespace-nowrap">TIN Value</th>
-                                    <th class="px-4 py-3 whitespace-nowrap">TIN Validation</th>
-                                    <th class="px-4 py-3 whitespace-nowrap">Modification Remarks</th>
-                                    <th class="px-4 py-3 whitespace-nowrap">Modified TIN</th>
-                                    <th class="px-4 py-3 whitespace-nowrap">Modified Validation</th>
+                                    <th scope="col" class="px-4 py-3 whitespace-nowrap">UCIC</th>
+                                    <th scope="col" class="px-4 py-3 whitespace-nowrap">Type</th>
+                                    <th scope="col" class="px-4 py-3 whitespace-nowrap">Country of Tax Residence</th>
+                                    <th scope="col" class="px-4 py-3 whitespace-nowrap">CTR Code</th>
+                                    <th scope="col" class="px-4 py-3 whitespace-nowrap">TIN Value</th>
+                                    <th scope="col" class="px-4 py-3 whitespace-nowrap">TIN Validation</th>
+                                    <th scope="col" class="px-4 py-3 whitespace-nowrap">Modification Remarks</th>
+                                    <th scope="col" class="px-4 py-3 whitespace-nowrap">Modified TIN</th>
+                                    <th scope="col" class="px-4 py-3 whitespace-nowrap">Modified Validation</th>
                                 </tr>
                             </thead>
+                            <!-- P1-C: spacer rows above and below the rendered window carry the scroll height -->
+                            <tbody id="bulk-pad-top-wrap"><tr aria-hidden="true"><td colspan="9" style="padding:0;border:0;height:0"><div id="bulk-pad-top"></div></td></tr></tbody>
                             <tbody id="bulk-preview-body" class="divide-y divide-white/5"></tbody>
+                            <tbody id="bulk-pad-bottom-wrap"><tr aria-hidden="true"><td colspan="9" style="padding:0;border:0;height:0"><div id="bulk-pad-bottom"></div></td></tr></tbody>
                         </table>
                     </div>
                 </div>
@@ -1566,10 +1675,12 @@ This number is granted by the DNIC (National Direction of Civil Identification),
         };
         
         // Custom Toast function to strictly avoid using window.alert()
+        // A-3: errors go to the assertive live region, everything else to the polite one.
+        // A-11: bg-rose-700 lifts error contrast over the 4.5:1 AA threshold at this text size.
         function showToast(msg, isError = false) {
-            const toastContainer = document.getElementById('toast-container');
+            const toastContainer = document.getElementById(isError ? 'toast-container-alert' : 'toast-container');
             const toast = document.createElement('div');
-            toast.className = `px-4 py-3 rounded-lg shadow-lg text-sm font-medium text-white transform transition-all duration-300 translate-y-10 opacity-0 ${isError ? 'bg-rose-600' : 'bg-slate-700'}`;
+            toast.className = `px-4 py-3 rounded-lg shadow-lg text-sm font-medium text-white transform transition-all duration-300 translate-y-10 opacity-0 ${isError ? 'bg-rose-700' : 'bg-slate-700'}`;
             toast.textContent = msg;
             toastContainer.appendChild(toast);
             
@@ -1667,10 +1778,12 @@ This number is granted by the DNIC (National Direction of Civil Identification),
                         autoEnt: rows[i][4] || 'NA',
                         formatIndRaw: rows[i][5] || '', 
                         descInd: rows[i][6] || '',
-                        formatEntRaw: rows[i][7] || '', 
+                        formatEntRaw: rows[i][7] || '',
                         descEnt: rows[i][8] || ''
                     });
                 }
+                // P1-A: state.countries has just been (re)filled — drop the code index so it rebuilds.
+                COUNTRY_BY_CODE = null;
                 initDropdown();
             } catch (err) {
                 console.error("Data Parsing Error: ", err);
@@ -1684,6 +1797,8 @@ This number is granted by the DNIC (National Direction of Civil Identification),
 
             setupEventListeners();
             registerPwaFeatures();
+            // P2-9: called directly instead of monkey-patching the initApp binding.
+            setupBulkInterface();
         }
 
         function updateClock() {
@@ -1721,15 +1836,26 @@ This number is granted by the DNIC (National Direction of Civil Identification),
             });
 
             // Accidental Data Loss Protection
+            // P2-8: only warn while there is unexported work — not forever after an export.
             window.addEventListener('beforeunload', (e) => {
-                if (bulkOutputRows && bulkOutputRows.length > 0) {
+                if (bulkOutputRows && bulkOutputRows.length > 0 && !bulkExportCompleted) {
                     e.preventDefault();
                     e.returnValue = 'You have processed data that has not been exported. Are you sure you want to leave?';
                 }
             });
         }
 
-        function initDropdown() {
+        // P4-6: TomSelect is deferred, so guard against it not being parsed yet.
+        function initDropdown(attempt = 0) {
+            if (typeof TomSelect === 'undefined') {
+                if (attempt > 40) {                       // ~4 s, then give up loudly
+                    console.error('TomSelect failed to load; the jurisdiction dropdown is unavailable.');
+                    showToast('The country selector could not load. Check your network connection and reload.', true);
+                    return;
+                }
+                setTimeout(() => initDropdown(attempt + 1), 100);
+                return;
+            }
             new TomSelect('#countrySelect', {
                 valueField: 'id', labelField: 'name', searchField: ['id', 'name'],
                 options: state.countries, placeholder: 'Type country code or name...',
@@ -1772,7 +1898,8 @@ This number is granted by the DNIC (National Direction of Civil Identification),
         }
 
         function handleCountrySelect(countryCode) {
-            const data = state.countries.find(c => c.id === countryCode);
+            // P2-18: single mode now matches country codes exactly as bulk mode does.
+            const data = countryByCode(String(countryCode || '').toUpperCase());
             if (!data) return;
             state.selectedCountryData = data;
             
@@ -1866,37 +1993,41 @@ This number is granted by the DNIC (National Direction of Civil Identification),
         }
 
         function runValidationEngine() {
-            const formatRaw = state.entityType === 'individual' ? state.selectedCountryData.formatIndRaw : state.selectedCountryData.formatEntRaw;
-            const oppositeFormatRaw = state.entityType === 'individual' ? state.selectedCountryData.formatEntRaw : state.selectedCountryData.formatIndRaw;
+            const country = state.selectedCountryData;
+            const primaryType = state.entityType === 'individual' ? 'Individual' : 'Entity';
+            const oppositeType = primaryType === 'Individual' ? 'Entity' : 'Individual';
+            const formatRaw = primaryType === 'Individual' ? country.formatIndRaw : country.formatEntRaw;
             const input = state.currentInput;
-            
+
             if (formatRaw && formatRaw.trim().toLowerCase().includes("no format prescribed as per oecd")) {
                 renderValidationFeedback(true, false, input, false, [formatRaw], true);
                 return;
             }
 
-            // Helper to check formats
-            const checkFormat = (rawStr, val) => {
-                if (!rawStr || rawStr === "N/A" || rawStr === "-") return { valid: false, nearMiss: false, formats: [] };
-                let cleaned = rawStr.replace(/"/g, '');
-                let formats = cleaned.split(/,\s*|\n| or /i).map(f => f.trim()).filter(f => f.length > 0);
-                
+            // Helper to check formats.
+            // P4-8: shares bulkFormats()/cachedRegex() with bulk mode, so nothing is re-split
+            // or recompiled on each of the 300 ms-debounced keystrokes, and single and bulk
+            // mode can no longer diverge on what counts as a valid format.
+            const checkFormat = (type, val) => {
+                const { formats, compact } = bulkFormats(country, type);
                 let isValid = false, isNearMiss = false;
-                
-                for (let fmt of formats) {
-                    try { if (buildRegexFromFormat(fmt).test(val)) { isValid = true; break; } } catch(e) {}
+
+                for (let i = 0; i < formats.length; i++) {
+                    const rx = cachedRegex(formats[i]);
+                    if (rx && rx.test(val)) { isValid = true; break; }
                 }
-                
+
                 if (!isValid) {
                     const strippedVal = stripNonAlphaNumeric(val);
-                    for (let fmt of formats) {
-                        try { if (buildRegexFromFormat(stripNonAlphaNumeric(fmt)).test(strippedVal)) { isNearMiss = true; break; } } catch(e) {}
+                    for (let i = 0; i < compact.length; i++) {
+                        const rx = cachedRegex(compact[i]);
+                        if (rx && rx.test(strippedVal)) { isNearMiss = true; break; }
                     }
                 }
                 return { valid: isValid, nearMiss: isNearMiss, formats: formats };
             };
 
-            const primaryCheck = checkFormat(formatRaw, input);
+            const primaryCheck = checkFormat(primaryType, input);
             let isLiteralError = false;
 
             if (primaryCheck.formats.includes(input) && (input.includes('9') || input.includes('A'))) {
@@ -1905,7 +2036,7 @@ This number is granted by the DNIC (National Direction of Civil Identification),
 
             // SMART-SWITCH LOGIC: If it fails primary, but passes the opposite entity type exactly
             if (!primaryCheck.valid && !isLiteralError) {
-                const secondaryCheck = checkFormat(oppositeFormatRaw, input);
+                const secondaryCheck = checkFormat(oppositeType, input);
                 if (secondaryCheck.valid) {
                     // Auto-switch the UI
                     const newType = state.entityType === 'individual' ? 'entity' : 'individual';
@@ -1999,6 +2130,24 @@ This number is granted by the DNIC (National Direction of Civil Identification),
             DOM.step3.classList.add('step-disabled');
         }
 
+        // P4-9: wait for the style/layout/paint of the class change instead of guessing 100 ms.
+        const afterNextPaint = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+        // P4-5: html2canvas is ~200 KB and only ever used by executeExport('jpg'). Load it on demand.
+        let html2canvasLoader = null;
+        function loadHtml2Canvas() {
+            if (window.html2canvas) return Promise.resolve(window.html2canvas);
+            if (html2canvasLoader) return html2canvasLoader;
+            html2canvasLoader = new Promise((resolve, reject) => {
+                const s = document.createElement('script');
+                s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
+                s.onload = () => resolve(window.html2canvas);
+                s.onerror = () => { html2canvasLoader = null; reject(new Error('html2canvas could not be loaded')); };
+                document.head.appendChild(s);
+            });
+            return html2canvasLoader;
+        }
+
         async function executeExport(type) {
             // Apply strict UI flattening for export
             document.body.classList.add('exporting-ui');
@@ -2018,15 +2167,18 @@ This number is granted by the DNIC (National Direction of Civil Identification),
 
             try {
                 if (type === 'jpg') {
+                    // Fetch the imaging library on first use (P4-5)
+                    const html2canvas = await loadHtml2Canvas();
+
                     // Activate specific CSS fixes for html2canvas
                     document.body.classList.add('canvas-layout');
                     window.scrollTo(0, 0); // prevents top-cropping
-                    
-                    // Small delay to ensure CSS applies completely
-                    await new Promise(r => setTimeout(r, 100));
+
+                    // Wait for the class change to be styled, laid out and painted (P4-9)
+                    await afterNextPaint();
 
                     // Use html2canvas for image snapshot (optimized for lightweight size)
-                    const canvas = await html2canvas(element, { 
+                    const canvas = await html2canvas(element, {
                         scale: 1.5, // Reduced from 2 to save size
                         useCORS: true, 
                         backgroundColor: '#0f172a',
@@ -2041,8 +2193,8 @@ This number is granted by the DNIC (National Direction of Civil Identification),
                 } else if (type === 'print') {
                     // Activate un-flexing logic for Native PDF Print to prevent blank spaces
                     document.body.classList.add('print-layout');
-                    await new Promise(r => setTimeout(r, 100));
-                    window.print(); 
+                    await afterNextPaint();
+                    window.print();
                     document.body.classList.remove('print-layout');
                 }
             } catch(e) {
@@ -2057,14 +2209,128 @@ This number is granted by the DNIC (National Direction of Civil Identification),
         // Bulk validation is deliberately kept in-browser: no tax data is uploaded to a server.
         const BULK_HEADERS = ['UCIC', 'Individual or Entity', 'Country of Tax Residence', 'CTR Code', 'TIN Value', 'TIN validation remarks', 'TIN Modification Remarks', 'TIN Value Modified', 'TIN validation remarks on Modified TIN value'];
         let bulkOutputRows = [], bulkSourceName = 'OECD_TIN_validation';
+        let bulkAborted = false;            // P1-B: set by the Cancel button
+        let bulkExportCompleted = false;    // P2-8: clears the beforeunload guard once a file is produced
 
-        window.switchValidationMode = function(mode) {
+        /* ── P1-B: yield primitive. Faster than rAF and, unlike rAF, it keeps running when the
+           tab is in the background — rAF is throttled to ~0 Hz there and would stall a run. ── */
+        const YIELD_MS = 12;                // per-slice CPU budget; leaves ~4 ms of a 16.7 ms frame for paint
+        const yieldToBrowser = (() => {
+            if (typeof scheduler !== 'undefined' && scheduler.yield) return () => scheduler.yield();
+            const ch = new MessageChannel();
+            return () => new Promise(res => { ch.port1.onmessage = () => res(); ch.port2.postMessage(0); });
+        })();
+
+        // Timer variables for bulk validation
+        let bulkValidationStartTime = null;
+        let bulkValidationReadingStartTime = null;
+        let bulkValidationReadingEndTime = null;
+        let bulkValidationProcessingStartTime = null;
+        let bulkValidationProcessingEndTime = null;
+        let bulkValidationTimerInterval = null;
+        let bulkValidationTotalRows = 0;
+
+        function formatTimerDisplay(ms) {
+            const totalSeconds = Math.floor(ms / 1000);
+            const minutes = Math.floor(totalSeconds / 60);
+            const seconds = totalSeconds % 60;
+            return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+        }
+
+        /* Writes the elapsed time to the floating widget and the progress-card ticker.
+           Kept separate from the interval below because the interval cannot be relied on
+           during a bulk run — see the note in startBulkValidationTimer. */
+        function updateBulkTimerDisplay() {
+            if (!bulkValidationStartTime) return;
+            const formatted = formatTimerDisplay(Date.now() - bulkValidationStartTime);
+            const display = document.getElementById('bulk-timer-display');
+            const progressTimer = document.getElementById('bulk-progress-timer');
+            if (display) display.textContent = formatted;
+            if (progressTimer) progressTimer.textContent = formatted;
+        }
+
+        function startBulkValidationTimer(isReading = false) {
+            if (!bulkValidationStartTime) {
+                bulkValidationStartTime = Date.now();
+            }
+
+            if (isReading) {
+                bulkValidationReadingStartTime = Date.now();
+            }
+
+            document.getElementById('bulk-timer-widget').classList.remove('hidden');
+            updateBulkTimerDisplay();                       // paint 00:00 immediately
+
+            if (bulkValidationTimerInterval) clearInterval(bulkValidationTimerInterval);
+            /* IMPORTANT: this interval only covers the file-reading and idle phases.
+               processBulkWorksheet yields with scheduler.yield(), whose continuations are
+               scheduled ABOVE timer tasks, so this callback is starved for the entire
+               duration of a validation run and both clocks would sit at 00:00. The loop
+               therefore calls updateBulkTimerDisplay() itself on every progress paint. */
+            bulkValidationTimerInterval = setInterval(updateBulkTimerDisplay, 100);
+        }
+
+        function stopBulkValidationTimer(phase = null) {
+            if (phase === 'reading' && bulkValidationReadingStartTime) {
+                bulkValidationReadingEndTime = Date.now();
+            } else if (phase === 'processing' && bulkValidationProcessingStartTime) {
+                bulkValidationProcessingEndTime = Date.now();
+            }
+        }
+
+        function getValidationTimings() {
+            const readingTime = bulkValidationReadingEndTime && bulkValidationReadingStartTime 
+                ? (bulkValidationReadingEndTime - bulkValidationReadingStartTime) / 1000 
+                : 0;
+            const processingTime = bulkValidationProcessingEndTime && bulkValidationProcessingStartTime 
+                ? (bulkValidationProcessingEndTime - bulkValidationProcessingStartTime) / 1000 
+                : 0;
+            const totalTime = bulkValidationStartTime 
+                ? (Date.now() - bulkValidationStartTime) / 1000 
+                : 0;
+            
+            return { readingTime, processingTime, totalTime };
+        }
+
+        function hideBulkTimerWidget() {
+            document.getElementById('bulk-timer-widget').classList.add('hidden');
+            if (bulkValidationTimerInterval) {
+                clearInterval(bulkValidationTimerInterval);
+                bulkValidationTimerInterval = null;
+            }
+            bulkValidationStartTime = null;
+        }
+
+        window.switchValidationMode = function(mode, focusTab = false) {
             const bulk = mode === 'bulk';
+            const singleBtn = document.getElementById('single-mode-btn');
+            const bulkBtn = document.getElementById('bulk-mode-btn');
             document.getElementById('single-validation-panel').classList.toggle('hidden', bulk);
             document.getElementById('bulk-validation-panel').classList.toggle('hidden', !bulk);
-            document.getElementById('single-mode-btn').setAttribute('aria-selected', String(!bulk));
-            document.getElementById('bulk-mode-btn').setAttribute('aria-selected', String(bulk));
+            singleBtn.setAttribute('aria-selected', String(!bulk));
+            bulkBtn.setAttribute('aria-selected', String(bulk));
+            // A-5: roving tabindex — only the selected tab is in the tab order.
+            singleBtn.tabIndex = bulk ? -1 : 0;
+            bulkBtn.tabIndex = bulk ? 0 : -1;
+            if (focusTab) (bulk ? bulkBtn : singleBtn).focus();
         };
+
+        // A-5: Left/Right (and Home/End) move between tabs, per the ARIA Authoring Practices.
+        function setupModeTabKeyboard() {
+            const tabs = [document.getElementById('single-mode-btn'), document.getElementById('bulk-mode-btn')];
+            tabs.forEach((tab, i) => {
+                tab.addEventListener('keydown', (e) => {
+                    let target = null;
+                    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') target = tabs[(i + 1) % tabs.length];
+                    else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') target = tabs[(i - 1 + tabs.length) % tabs.length];
+                    else if (e.key === 'Home') target = tabs[0];
+                    else if (e.key === 'End') target = tabs[tabs.length - 1];
+                    if (!target) return;
+                    e.preventDefault();
+                    switchValidationMode(target.id === 'bulk-mode-btn' ? 'bulk' : 'single', true);
+                });
+            });
+        }
 
         window.toggleTheme = function() {
             const isLight = document.body.classList.toggle('light-mode');
@@ -2075,8 +2341,8 @@ This number is granted by the DNIC (National Direction of Civil Identification),
             if (button) {
                 button.setAttribute('aria-label', isLight ? 'Switch to dark mode' : 'Switch to light mode');
                 button.className = isLight 
-                    ? "no-export inline-flex items-center gap-1.5 text-xs bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-700 px-3 py-1.5 rounded-full transition-colors border border-indigo-500/20 ml-2" 
-                    : "no-export inline-flex items-center gap-1.5 text-xs bg-amber-500/20 hover:bg-amber-500/40 text-amber-300 px-3 py-1.5 rounded-full transition-colors border border-amber-500/30 ml-2";
+                    ? "no-export inline-flex items-center gap-1.5 text-xs bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-700 px-3 py-1.5 rounded-full transition-colors border border-indigo-500/20 min-h-[44px]"
+                    : "no-export inline-flex items-center gap-1.5 text-xs bg-amber-500/20 hover:bg-amber-500/40 text-amber-300 px-3 py-1.5 rounded-full transition-colors border border-amber-500/30 min-h-[44px]";
             }
             if (label) label.textContent = isLight ? 'Dark mode' : 'Light mode';
             if (icon) {
@@ -2087,61 +2353,101 @@ This number is granted by the DNIC (National Direction of Civil Identification),
             }
         };
 
+        /* ── P1-A: hot-path caches. Built once per session, reused for every row. ── */
+        let COUNTRY_BY_CODE = null;                 // 'IN' -> country object
+        function countryByCode(code) {
+            if (!COUNTRY_BY_CODE) {
+                COUNTRY_BY_CODE = new Map();
+                for (const c of state.countries) COUNTRY_BY_CODE.set(String(c.id).toUpperCase(), c);
+            }
+            return COUNTRY_BY_CODE.get(code) || null;
+        }
+        const RX_CACHE = new Map();                 // format string -> compiled RegExp | null
+        function cachedRegex(format) {
+            if (RX_CACHE.has(format)) return RX_CACHE.get(format);
+            let rx = null;
+            try { rx = buildRegexFromFormat(format); }
+            catch (e) { console.warn('Unbuildable TIN format skipped:', format, e); }
+            RX_CACHE.set(format, rx);
+            return rx;
+        }
+        const FMT_CACHE = new Map();                // 'IN|Individual' -> parsed rule object
+        const RX_NONALNUM = /[^A-Z0-9]/g, RX_HAS_9A = /[9A]/, RX_UCIC_BAD = /[.;+\-)]/;
+
         function bulkFormats(country, type) {
-            if (!country) return { formats: [], noFormat: false };
+            if (!country) return { formats: [], compact: [], noFormat: false };
+            const key = country.id + '|' + type;
+            const hit = FMT_CACHE.get(key);
+            if (hit) return hit;
             const raw = type === 'Individual' ? country.formatIndRaw : country.formatEntRaw;
-            if (raw && raw.trim().toLowerCase().includes('no format prescribed as per oecd')) return { formats: [], noFormat: true };
-            return { formats: raw && raw !== 'N/A' && raw !== '-' ? raw.replace(/"/g, '').split(/,\s*|\n| or /i).map(x => x.trim()).filter(Boolean) : [], noFormat: false };
+            let rule;
+            if (raw && raw.trim().toLowerCase().includes('no format prescribed as per oecd')) {
+                rule = { formats: [], compact: [], noFormat: true };
+            } else {
+                const formats = (raw && raw !== 'N/A' && raw !== '-')
+                    ? raw.replace(/"/g, '').split(/,\s*|\n| or /i).map(x => x.trim()).filter(Boolean) : [];
+                rule = { formats, compact: formats.map(f => f.replace(/[^A-Z0-9]/gi, '')), noFormat: false };
+            }
+            FMT_CACHE.set(key, rule);
+            return rule;
         }
 
         function isTinValid(value, country, type) {
             const rule = bulkFormats(country, type);
             const tin = String(value || '').trim().toUpperCase();
             if (rule.noFormat) return tin.length > 0;
-            return rule.formats.some(format => {
-                if (format === tin && /[9A]/.test(tin)) return false;
-                try { return buildRegexFromFormat(format).test(tin); } catch (e) { return false; }
-            });
+            for (let i = 0; i < rule.formats.length; i++) {
+                const f = rule.formats[i];
+                if (f === tin && RX_HAS_9A.test(tin)) continue;   // placeholder-literal guard, preserved
+                const rx = cachedRegex(f);
+                if (rx && rx.test(tin)) return true;
+            }
+            return false;
         }
 
         function proposedTinCorrection(value, country, type) {
             const original = String(value || '').trim().toUpperCase();
             if (!original || !country) return null;
-            const { formats, noFormat } = bulkFormats(country, type);
+            const { formats, compact, noFormat } = bulkFormats(country, type);
             if (noFormat) return null;
-            const alphaNumeric = original.replace(/[^A-Z0-9]/g, '');
-            for (const format of formats) {
-                const compact = format.replace(/[^A-Z0-9]/gi, '');
-                try {
-                    if (!buildRegexFromFormat(compact).test(alphaNumeric)) continue;
-                    let pointer = 0, candidate = '';
-                    for (const token of format) {
-                        if (token === '9' || token.toUpperCase() === 'A') candidate += alphaNumeric[pointer++];
-                        else if (/[A-Z0-9]/i.test(token)) { if (alphaNumeric[pointer++] !== token.toUpperCase()) { candidate = ''; break; } candidate += token; }
-                        else candidate += token;
-                    }
-                    if (candidate && isTinValid(candidate, country, type) && candidate !== original) {
-                        const oldMarks = (original.match(/[^A-Z0-9]/g) || []).length;
-                        const newMarks = (candidate.match(/[^A-Z0-9]/g) || []).length;
-                        const reason = newMarks > oldMarks ? 'adding required punctuation or spaces' : newMarks < oldMarks ? 'removing extra punctuation or spaces' : 'repositioning punctuation or spaces';
-                        return { value: candidate, remark: `TIN can be corrected by ${reason}` };
-                    }
-                } catch (e) {}
+            const alphaNumeric = original.replace(RX_NONALNUM, '');
+            for (let i = 0; i < formats.length; i++) {
+                const format = formats[i];
+                const rx = cachedRegex(compact[i]);
+                if (!rx || !rx.test(alphaNumeric)) continue;
+                let pointer = 0, candidate = '';
+                for (let j = 0; j < format.length; j++) {
+                    const token = format[j];
+                    if (token === '9' || token.toUpperCase() === 'A') candidate += alphaNumeric[pointer++];
+                    else if (/[A-Z0-9]/i.test(token)) { if (alphaNumeric[pointer++] !== token.toUpperCase()) { candidate = ''; break; } candidate += token; }
+                    else candidate += token;
+                }
+                if (candidate && isTinValid(candidate, country, type) && candidate !== original) {
+                    const oldMarks = (original.match(RX_NONALNUM) || []).length;
+                    const newMarks = (candidate.match(RX_NONALNUM) || []).length;
+                    const reason = newMarks > oldMarks ? 'adding required punctuation or spaces' : newMarks < oldMarks ? 'removing extra punctuation or spaces' : 'repositioning punctuation or spaces';
+                    return { value: candidate, remark: `TIN can be corrected by ${reason}` };
+                }
             }
             return null;
         }
 
         function processBulkRecord(source) {
             const row = {};
-            BULK_HEADERS.forEach(h => row[h] = source[h] == null ? '' : String(source[h]).trim());
+            // P1-A5: indexed loop — .forEach here allocates a closure for every row processed.
+            for (let i = 0; i < BULK_HEADERS.length; i++) {
+                const h = BULK_HEADERS[i];
+                row[h] = source[h] == null ? '' : String(source[h]).trim();
+            }
             const ucic = row['UCIC'], type = row['Individual or Entity'], ctr = row['CTR Code'].toUpperCase();
-            const country = state.countries.find(c => c.id.toUpperCase() === ctr);
-            const ucicInvalid = /[.;+\-)]/.test(ucic);
+            const country = countryByCode(ctr);
+            const tinUC = row['TIN Value'].toUpperCase();
+            const ucicInvalid = RX_UCIC_BAD.test(ucic);
             const typeInvalid = type !== 'Individual' && type !== 'Entity';
             const residenceMissing = !!ucic && !row['Country of Tax Residence'];
-            
-            const valid = !ucicInvalid && !typeInvalid && !residenceMissing && !!country && isTinValid(row['TIN Value'], country, type);
-            
+
+            const valid = !ucicInvalid && !typeInvalid && !residenceMissing && !!country && isTinValid(tinUC, country, type);
+
             row['TIN validation remarks'] = valid ? 'TIN structure is Valid' : 'TIN structure is Invalid';
             row['TIN Value Modified'] = '';
             row['TIN validation remarks on Modified TIN value'] = '';
@@ -2157,14 +2463,14 @@ This number is granted by the DNIC (National Direction of Civil Identification),
             } else if (!country) {
                 row['TIN Modification Remarks'] = 'Invalid TIN value cannot be Modified: CTR Code is not in the OECD dataset';
             } else {
-                let correction = proposedTinCorrection(row['TIN Value'], country, type);
-                
+                let correction = proposedTinCorrection(tinUC, country, type);
+
                 if (!correction) {
                     const oppositeType = type === 'Individual' ? 'Entity' : 'Individual';
-                    if (isTinValid(row['TIN Value'], country, oppositeType)) {
+                    if (isTinValid(tinUC, country, oppositeType)) {
                         correction = { value: row['TIN Value'], remark: `Valid structure under '${oppositeType}' rules. Type discrepancy detected.` };
                     } else {
-                        const oppCorrection = proposedTinCorrection(row['TIN Value'], country, oppositeType);
+                        const oppCorrection = proposedTinCorrection(tinUC, country, oppositeType);
                         if (oppCorrection) {
                             correction = { value: oppCorrection.value, remark: `Corrected using '${oppositeType}' rules. Type discrepancy detected.` };
                         }
@@ -2177,7 +2483,8 @@ This number is granted by the DNIC (National Direction of Civil Identification),
                     const isNowValid = isTinValid(correction.value, country, type) || isTinValid(correction.value, country, type === 'Individual' ? 'Entity' : 'Individual');
                     row['TIN validation remarks on Modified TIN value'] = isNowValid ? 'Modified TIN structure is Valid' : 'Modified TIN structure is Invalid';
                 } else {
-                    row['TIN Modification Remarks'] = 'Invalid TIN value cannot be Modified';
+                    // §3.2: state the next action rather than only the limitation.
+                    row['TIN Modification Remarks'] = 'No safe punctuation-only correction exists. Verify this TIN against source documents.';
                 }
             }
             return row;
@@ -2194,56 +2501,168 @@ This number is granted by the DNIC (National Direction of Civil Identification),
         async function readBulkFile(file) {
             if (!file || !/\.xls[xb]$/i.test(file.name)) return renderBulkStatus('Please select an .XLSX or .XLSB workbook.', true);
             if (!window.XLSX) return renderBulkStatus('The spreadsheet library did not load. Check your network connection and retry.', true);
+
+            // Reset timer for new file and START IMMEDIATELY
+            hideBulkTimerWidget();
+            bulkValidationStartTime = null;
+            bulkValidationReadingStartTime = null;
+            bulkValidationReadingEndTime = null;
+            bulkValidationProcessingStartTime = null;
+            bulkValidationProcessingEndTime = null;
+            bulkValidationTotalRows = 0;
+            
+            // Start timer NOW (includes reading time)
+            startBulkValidationTimer(true);
+            
             bulkSourceName = file.name.replace(/\.[^.]+$/, '') || 'OECD_TIN_validation';
             try {
                 renderBulkStatus(`Reading ${file.name}…`);
                 const book = XLSX.read(await file.arrayBuffer(), { type: 'array', dense: true, raw: false });
                 const sheet = book.Sheets[book.SheetNames[0]];
                 const range = XLSX.utils.decode_range(sheet['!ref']);
-                const cellValue = (row, column) => {
-                    const cell = Array.isArray(sheet) ? sheet[row]?.[column] : sheet[XLSX.utils.encode_cell({ r: row, c: column })];
-                    return cell && cell.v != null ? String(cell.w ?? cell.v).trim() : '';
-                };
+                // P4-2: decide dense-vs-sparse once, not once per cell. At 10 lakh rows the
+                // per-cell Array.isArray() check and encode_cell({r,c}) object allocation cost
+                // ~90 lakh redundant operations.
+                const dense = Array.isArray(sheet);
+                const cellValue = dense
+                    ? (row, column) => {
+                        const cell = sheet[row] && sheet[row][column];
+                        return cell && cell.v != null ? String(cell.w != null ? cell.w : cell.v).trim() : '';
+                    }
+                    : (row, column) => {
+                        const cell = sheet[XLSX.utils.encode_cell({ r: row, c: column })];
+                        return cell && cell.v != null ? String(cell.w != null ? cell.w : cell.v).trim() : '';
+                    };
                 const headers = Array.from({ length: range.e.c - range.s.c + 1 }, (_, offset) => cellValue(range.s.r, range.s.c + offset));
                 const headerIndex = Object.fromEntries(headers.map((h, i) => [normaliseBulkHeader(h), i]));
                 const missing = BULK_HEADERS.filter(h => headerIndex[normaliseBulkHeader(h)] === undefined);
-                if (missing.length) return renderBulkStatus(`Upload stopped. Missing required header${missing.length > 1 ? 's' : ''}: ${missing.join(', ')}`, true);
+                if (missing.length) {
+                    hideBulkTimerWidget();   // P2-4: otherwise the floating timer counts up forever
+                    return renderBulkStatus(`Upload stopped. Missing required header${missing.length > 1 ? 's' : ''}: ${missing.join(', ')}`, true);
+                }
                 const index = Object.fromEntries(BULK_HEADERS.map(h => [h, headerIndex[normaliseBulkHeader(h)]]));
                 const dataStart = range.s.r + 1, totalRows = Math.max(0, range.e.r - range.s.r);
+                bulkValidationTotalRows = totalRows;
+                
+                // Mark reading phase complete
+                stopBulkValidationTimer('reading');
+                
                 renderBulkStatus(`Header check passed. Up to ${totalRows.toLocaleString()} data rows ready for validation.`);
                 await processBulkWorksheet(cellValue, dataStart, range.e.r, range.s.c, index);
-            } catch (err) { console.error(err); renderBulkStatus(`Unable to read this workbook: ${err.message || 'unsupported or damaged file'}`, true); }
+            } catch (err) {
+                console.error(err);
+                hideBulkTimerWidget();   // P2-4
+                renderBulkStatus(`Unable to read this workbook: ${err.message || 'unsupported or damaged file'}`, true);
+            }
         }
 
+        window.cancelBulkValidation = function () {
+            bulkAborted = true;
+            const btn = document.getElementById('bulk-cancel-btn');
+            if (btn) { btn.disabled = true; btn.textContent = 'Cancelling…'; }
+        };
+
+        /* ── P1-B: pack as many rows as fit into a 12 ms slice, then yield. A fixed 1,500-row
+           chunk is a guess that either overruns the frame budget or wastes it; a time budget
+           self-tunes to the dataset shape and the machine. ── */
         async function processBulkWorksheet(cellValue, firstRow, lastRow, firstColumn, index) {
-            const progressCard = document.getElementById('bulk-progress-card'); progressCard.classList.remove('hidden');
-            document.getElementById('bulk-results').classList.add('hidden'); bulkOutputRows = [];
-            const chunk = 1500;
+            bulkValidationProcessingStartTime = Date.now();
+            const progressCard = document.getElementById('bulk-progress-card');
+            const bar    = document.getElementById('bulk-progress-bar');
+            const pctEl  = document.getElementById('bulk-progress-percent');
+            const label  = document.getElementById('bulk-progress-label');
+            const cancelBtn = document.getElementById('bulk-cancel-btn');
+            progressCard.classList.remove('hidden');
+            document.getElementById('bulk-results').classList.add('hidden');
+            bulkOutputRows = [];
+            bulkAborted = false;
+            bulkExportCompleted = false;                                   // P2-8: new run, new unexported work
+            if (cancelBtn) { cancelBtn.disabled = false; cancelBtn.textContent = 'Cancel'; }
+            document.body.classList.add('bulk-busy');                      // R-8: pause orb compositing
+
             const total = Math.max(0, lastRow - firstRow + 1);
-            for (let start = firstRow; start <= lastRow; start += chunk) {
-                const end = Math.min(start + chunk - 1, lastRow);
-                for (let rowNumber = start; rowNumber <= end; rowNumber++) {
-                    const source = Object.fromEntries(BULK_HEADERS.map(h => [h, cellValue(rowNumber, firstColumn + index[h])]));
-                    if (Object.values(source).some(value => value !== '')) bulkOutputRows.push(processBulkRecord(source));
+            const cols  = BULK_HEADERS.map(h => firstColumn + index[h]);   // hoisted: no per-row map()
+            const src   = {};                                              // reused scratch object
+            let lastPaint = 0, lastPaintAt = 0, row = firstRow;
+
+            try {
+                while (row <= lastRow) {
+                    if (bulkAborted) throw new DOMException('Cancelled by user', 'AbortError');
+                    const slice = performance.now() + YIELD_MS;
+                    do {
+                        let any = false;
+                        for (let c = 0; c < BULK_HEADERS.length; c++) {
+                            const v = cellValue(row, cols[c]);
+                            src[BULK_HEADERS[c]] = v;
+                            if (v !== '') any = true;
+                        }
+                        if (any) bulkOutputRows.push(processBulkRecord(src));
+                        row++;
+                    } while (row <= lastRow && performance.now() < slice);
+
+                    const done = row - firstRow;
+                    const nowMs = performance.now();
+                    // Throttle DOM writes by row count, but also refresh at least ~4x/sec so the
+                    // elapsed-time clocks keep advancing even when rows are slow to read.
+                    if (done - lastPaint >= 5000 || nowMs - lastPaintAt >= 250 || row > lastRow) {
+                        const pct = Math.min(100, Math.round((done / Math.max(1, total)) * 100));
+                        bar.style.width = pct + '%';
+                        pctEl.textContent = pct + '%';
+                        progressCard.setAttribute('aria-valuenow', String(pct));   // A-2
+                        label.textContent = `Validating ${done.toLocaleString()} of ${total.toLocaleString()} rows…`;
+                        // The 100 ms interval in startBulkValidationTimer is starved by
+                        // scheduler.yield() for this whole loop, so drive both clocks here.
+                        updateBulkTimerDisplay();
+                        lastPaint = done;
+                        lastPaintAt = nowMs;
+                    }
+                    await yieldToBrowser();
                 }
-                const pct = Math.min(100, Math.round((((end - firstRow + 1) / Math.max(1, total)) * 100)));
-                document.getElementById('bulk-progress-bar').style.width = pct + '%'; document.getElementById('bulk-progress-percent').textContent = pct + '%';
-                document.getElementById('bulk-progress-label').textContent = `Validating ${Math.min(end - firstRow + 1, total).toLocaleString()} of ${total.toLocaleString()} rows…`;
-                await new Promise(requestAnimationFrame);
+                stopBulkValidationTimer('processing');
+                // P2-13: report throughput against the rows actually validated, so "Total Rows"
+                // and "rows/sec" agree when the sheet contains blank rows.
+                bulkValidationTotalRows = bulkOutputRows.length;
+                progressCard.classList.add('hidden');
+                renderBulkResults();
+            } catch (err) {
+                console.error('Bulk validation failed at source row', row, err);
+                progressCard.classList.add('hidden');
+                hideBulkTimerWidget();                                     // P2-4
+                bulkValidationTotalRows = bulkOutputRows.length;
+                const partial = bulkOutputRows.length;
+                if (err.name === 'AbortError') {
+                    renderBulkStatus(`Validation cancelled. ${partial.toLocaleString()} rows were processed and are available for export.`, true);
+                } else if (err instanceof RangeError || /allocation|heap|memory/i.test(err.message || '')) {
+                    renderBulkStatus(`Out of memory after ${partial.toLocaleString()} rows. Split the workbook into files of 5,00,000 rows or fewer and retry.`, true);
+                } else {
+                    renderBulkStatus(`Validation stopped at source row ${row + 1}: ${err.message || 'unexpected error'}. ${partial.toLocaleString()} rows were processed.`, true);
+                }
+                if (partial) renderBulkResults();                          // fallback: show partial results
+            } finally {
+                document.body.classList.remove('bulk-busy');
             }
-            progressCard.classList.add('hidden'); renderBulkResults();
         }
 
         window.currentBulkFilter = 'all';
         window.currentBulkSearch = '';
         window.currentFilteredData = []; // Global state for view-bound exports
 
-        window.copyToClipboard = function(text, btn) {
-            navigator.clipboard.writeText(text);
-            const oldHtml = btn.innerHTML;
-            btn.innerHTML = `<svg class="w-3.5 h-3.5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"></path></svg>`;
-            setTimeout(() => btn.innerHTML = oldHtml, 1500);
-        };
+        /* P2-10 / P2-11: one delegated listener replaces an inline onclick per copy button.
+           The value now travels in a data attribute instead of being interpolated into a JS
+           string literal, and the clipboard promise is awaited and caught. */
+        document.addEventListener('click', async (e) => {
+            const btn = e.target.closest('button[data-copy]');
+            if (!btn) return;
+            try {
+                await navigator.clipboard.writeText(btn.dataset.copy);
+                const old = btn.innerHTML;
+                btn.innerHTML = '<svg class="w-3.5 h-3.5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>';
+                setTimeout(() => { btn.innerHTML = old; }, 1500);
+            } catch (err) {
+                console.warn('Clipboard write blocked:', err);
+                showToast('Clipboard access is blocked. Select the value and press Ctrl+C.', true);
+            }
+        });
 
         window.handleBulkSearch = function(query) {
             window.currentBulkSearch = query.trim().toLowerCase();
@@ -2261,13 +2680,38 @@ This number is granted by the DNIC (National Direction of Civil Identification),
             renderBulkResults(false);
         };
 
+        /* §3.5: the export button states exactly what the file will contain. This is the
+           visible counterpart to defect E6 — a filtered export is no longer silent. */
+        function updateExportButtonLabel() {
+            const exportBtn = document.querySelector('button[onclick="downloadBulkOutput()"]');
+            if (!exportBtn) return;
+            const filterActive = window.currentBulkFilter !== 'all' || !!window.currentBulkSearch;
+            const n = filterActive ? (window.currentFilteredData || []).length : bulkOutputRows.length;
+            exportBtn.textContent = `Export ${n.toLocaleString('en-IN')} rows`;
+        }
+
         function renderBulkResults(rebuildSummary = true) {
             if (rebuildSummary) {
-                const totalRows = bulkOutputRows.length;
-                const valid = bulkOutputRows.filter(r => r['TIN validation remarks'] === 'TIN structure is Valid').length;
-                const fixed = bulkOutputRows.filter(r => r['TIN Value Modified'] !== '').length;
-                const validAfterMod = bulkOutputRows.filter(r => r['TIN validation remarks on Modified TIN value'] === 'Modified TIN structure is Valid').length;
-                
+                /* ── P1-D: one pass over the dataset instead of six .filter() calls plus a
+                   forEach. A Set also fixes P2-16: the old Map overwrote the type on a
+                   duplicate UCIC, so the Individual/Entity split counted the *last*
+                   occurrence rather than the first. ── */
+                let valid = 0, fixed = 0, validAfterMod = 0, ucicInd = 0, ucicEnt = 0;
+                const seenUcic = new Set();
+                for (let i = 0; i < bulkOutputRows.length; i++) {
+                    const r = bulkOutputRows[i];
+                    if (r['TIN validation remarks'] === 'TIN structure is Valid') valid++;
+                    if (r['TIN Value Modified'] !== '') fixed++;
+                    if (r['TIN validation remarks on Modified TIN value'] === 'Modified TIN structure is Valid') validAfterMod++;
+                    const u = r['UCIC'];
+                    if (u && !seenUcic.has(u)) {
+                        seenUcic.add(u);
+                        if (r['Individual or Entity'] === 'Individual') ucicInd++;
+                        else if (r['Individual or Entity'] === 'Entity') ucicEnt++;
+                    }
+                }
+                const totalRows = bulkOutputRows.length, totalUniqueUCICs = seenUcic.size;
+
                 const finalValid = valid + validAfterMod;
                 const qualityScore = totalRows > 0 ? ((finalValid / totalRows) * 100).toFixed(1) : 0;
                 const scoreColor = qualityScore >= 95 ? 'text-emerald-400' : (qualityScore >= 80 ? 'text-amber-400' : 'text-rose-400');
@@ -2277,25 +2721,60 @@ This number is granted by the DNIC (National Direction of Civil Identification),
                 const pctMod = totalRows > 0 ? ((fixed / totalRows) * 100).toFixed(1) : 0;
                 const pctFail = totalRows > 0 ? (((totalRows - valid - fixed) / totalRows) * 100).toFixed(1) : 0;
 
-                const ucicMap = new Map();
-                bulkOutputRows.forEach(r => { if (r['UCIC']) ucicMap.set(r['UCIC'], r['Individual or Entity']); });
-                const totalUniqueUCICs = ucicMap.size;
-                let ucicInd = 0, ucicEnt = 0;
-                ucicMap.forEach(type => { if (type === 'Individual') ucicInd++; else if (type === 'Entity') ucicEnt++; });
+                // Calculate efficiency metrics
+                // P2-2: guard the division — a sub-millisecond run used to render "Infinity rows/sec".
+                // P2-3: keep it numeric, so toLocaleString actually inserts separators
+                //       (.toFixed() returns a string, on which toLocaleString is a no-op).
+                const { readingTime, processingTime, totalTime } = getValidationTimings();
+                const rps = (bulkValidationTotalRows > 0 && processingTime > 0)
+                    ? Math.round(bulkValidationTotalRows / processingTime) : 0;
+                const rpsText = rps.toLocaleString('en-IN');
+                const efficiencyMessageFull = `Reading: ${readingTime.toFixed(2)}s | Validation: ${processingTime.toFixed(2)}s | Total: ${totalTime.toFixed(2)}s | Speed: ${rpsText} rows/sec`;
 
+                // Display efficiency as toast notification
+                showToast(`✓ Complete: ${efficiencyMessageFull}`, false);
+                
+                // Hide the timer widget after completion
+                hideBulkTimerWidget();
+
+                /* U-1: Data Quality is the headline finding, so it gets its own row and 4xl type
+                   with a plain-language subtitle; the remaining tiles drop to text-lg.
+                   U-2: engineering telemetry collapses to a single muted line — it should not
+                        outrank the compliance numbers.
+                   U-3: the distribution bar is h-3 with a real legend, not hover-only titles.
+                   R-5: sm:grid-cols-3 fills the previously unhandled 640–767px range. */
                 const summaryHTML = `
-                    <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mt-4 bg-slate-900/50 p-4 rounded-xl border border-white/10 shadow-inner">
-                        <div><div class="text-[10px] text-slate-400 uppercase tracking-widest mb-1 font-bold">Data Quality</div><div class="text-2xl font-bold ${scoreColor}">${qualityScore}%</div></div>
-                        <div><div class="text-[10px] text-slate-400 uppercase tracking-widest mb-1 font-bold">Total Rows</div><div class="text-xl font-bold text-white mt-1">${totalRows.toLocaleString()}</div></div>
-                        <div><div class="text-[10px] text-slate-400 uppercase tracking-widest mb-1 font-bold">Unique UCICs</div><div class="text-xl font-bold text-sky-400 leading-tight mt-1">${totalUniqueUCICs.toLocaleString()} <span class="text-[11px] text-slate-400 font-normal block mt-0.5">${ucicInd} Ind, ${ucicEnt} Ent</span></div></div>
-                        <div><div class="text-[10px] text-slate-400 uppercase tracking-widest mb-1 font-bold">Base Validation</div><div class="text-xl font-bold text-emerald-400 leading-tight mt-1">${valid.toLocaleString()} Pass <span class="text-[11px] text-rose-400 font-normal block mt-0.5">${(totalRows - valid).toLocaleString()} Fail</span></div></div>
-                        <div><div class="text-[10px] text-slate-400 uppercase tracking-widest mb-1 font-bold">Modifications</div><div class="text-xl font-bold text-amber-400 mt-1">${fixed.toLocaleString()}</div></div>
-                        <div><div class="text-[10px] text-slate-400 uppercase tracking-widest mb-1 font-bold">Valid Post-Mod</div><div class="text-xl font-bold text-emerald-400 mt-1">${validAfterMod.toLocaleString()}</div></div>
-                        <div class="col-span-2 md:col-span-3 lg:col-span-6 flex flex-col gap-1 mt-1">
-                            <div class="h-1.5 flex rounded-full overflow-hidden bg-slate-800 w-full opacity-80">
-                                <div style="width: ${pctValid}%" class="bg-emerald-500" title="Valid: ${pctValid}%"></div>
-                                <div style="width: ${pctMod}%" class="bg-amber-500" title="Modified: ${pctMod}%"></div>
-                                <div style="width: ${pctFail}%" class="bg-rose-500" title="Failed: ${pctFail}%"></div>
+                    <div class="mt-4 bg-slate-900/50 p-4 rounded-xl border border-white/10 shadow-inner flex flex-col gap-4">
+                        <div class="flex flex-col md:flex-row md:items-end md:justify-between gap-3 pb-3 border-b border-white/10">
+                            <div>
+                                <div class="text-[10px] text-slate-400 uppercase tracking-widest mb-1 font-bold">Data Quality</div>
+                                <div class="text-4xl font-bold leading-none ${scoreColor}">${qualityScore}%</div>
+                                <span class="text-xs text-slate-400 mt-2 block">${finalValid.toLocaleString()} of ${totalRows.toLocaleString()} rows pass OECD structure rules</span>
+                            </div>
+                            <div class="flex flex-wrap items-center gap-2 text-[11px] font-mono">
+                                <span class="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-blue-500/10 border border-blue-500/30"><span class="text-slate-400">Read</span><span class="text-blue-300 font-bold">${readingTime.toFixed(1)}s</span></span>
+                                <span class="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-cyan-500/10 border border-cyan-500/30"><span class="text-slate-400">Validated</span><span class="text-cyan-300 font-bold">${processingTime.toFixed(1)}s</span></span>
+                                <span class="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-sky-500/10 border border-sky-500/30"><span class="text-slate-400">Total</span><span class="text-sky-300 font-bold">${totalTime.toFixed(1)}s</span></span>
+                                <span class="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-violet-500/10 border border-violet-500/30"><span class="text-slate-400">Speed</span><span class="text-violet-300 font-bold">${rpsText}</span><span class="text-slate-400">rows/sec</span></span>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+                            <div><div class="text-[10px] text-slate-400 uppercase tracking-widest mb-1 font-bold">Total Rows</div><div class="text-lg font-bold text-white mt-1">${totalRows.toLocaleString()}</div></div>
+                            <div><div class="text-[10px] text-slate-400 uppercase tracking-widest mb-1 font-bold">Unique UCICs</div><div class="text-lg font-bold text-sky-400 leading-tight mt-1">${totalUniqueUCICs.toLocaleString()} <span class="text-[11px] text-slate-400 font-normal block mt-0.5">${ucicInd} Ind, ${ucicEnt} Ent</span></div></div>
+                            <div><div class="text-[10px] text-slate-400 uppercase tracking-widest mb-1 font-bold">Base Validation</div><div class="text-lg font-bold text-emerald-400 leading-tight mt-1">${valid.toLocaleString()} Pass <span class="text-[11px] text-rose-300 font-normal block mt-0.5">${(totalRows - valid).toLocaleString()} Fail</span></div></div>
+                            <div><div class="text-[10px] text-slate-400 uppercase tracking-widest mb-1 font-bold">Modifications</div><div class="text-lg font-bold text-amber-400 mt-1">${fixed.toLocaleString()}</div></div>
+                            <div><div class="text-[10px] text-slate-400 uppercase tracking-widest mb-1 font-bold">Valid Post-Mod</div><div class="text-lg font-bold text-emerald-400 mt-1">${validAfterMod.toLocaleString()}</div></div>
+                        </div>
+                        <div class="flex flex-col gap-2 pt-3 border-t border-white/10">
+                            <div class="h-3 flex rounded-full overflow-hidden bg-slate-800 w-full">
+                                <div style="width: ${pctValid}%" class="bg-emerald-500"></div>
+                                <div style="width: ${pctMod}%" class="bg-amber-500"></div>
+                                <div style="width: ${pctFail}%" class="bg-rose-500"></div>
+                            </div>
+                            <div class="flex flex-wrap items-center gap-x-5 gap-y-1 text-[11px] text-slate-300">
+                                <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-sm bg-emerald-500 shrink-0"></span>Valid ${pctValid}%</span>
+                                <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-sm bg-amber-500 shrink-0"></span>Modified ${pctMod}%</span>
+                                <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-sm bg-rose-500 shrink-0"></span>Failed ${pctFail}%</span>
                             </div>
                         </div>
                     </div>
@@ -2303,9 +2782,12 @@ This number is granted by the DNIC (National Direction of Civil Identification),
                 document.getElementById('bulk-summary').innerHTML = summaryHTML;
             }
             
-            const preview = document.getElementById('bulk-preview-body'); 
+            const preview = document.getElementById('bulk-preview-body');
             preview.innerHTML = '';
             document.getElementById('bulk-results').classList.remove('hidden');
+            // U-5: the filter bar only means something once there are rows to filter.
+            document.getElementById('bulk-filter-bar').classList.toggle('opacity-50', bulkOutputRows.length === 0);
+            document.getElementById('bulk-filter-bar').classList.toggle('pointer-events-none', bulkOutputRows.length === 0);
 
             // Apply Filters & Search
             let filteredRows = bulkOutputRows;
@@ -2321,151 +2803,268 @@ This number is granted by the DNIC (National Direction of Civil Identification),
             
             // Save state for Export
             window.currentFilteredData = filteredRows;
+            updateExportButtonLabel();                       // §3.5
+
+            /* ── P1-C: windowed virtual scroll. The DOM holds ≤ ~60 rows regardless of dataset
+               size. The previous loop appended every filtered row 100 at a time behind a rAF,
+               which at 10 lakh rows meant ~10,000 frames (~167 s) and ~2.5 crore nodes. ── */
+            const ROW_H = 37, OVERSCAN = 10;
+            const scroller = document.querySelector('.bulk-table-wrap');
+            const topPad = document.getElementById('bulk-pad-top');
+            const botPad = document.getElementById('bulk-pad-bottom');
+            const liveRegion = document.getElementById('bulk-preview-live');
+
+            // Any previous window's scroll handler must go, or stale closures keep painting.
+            if (scroller._tinScrollHandler) {
+                scroller.removeEventListener('scroll', scroller._tinScrollHandler);
+                scroller._tinScrollHandler = null;
+            }
 
             if (filteredRows.length === 0) {
+                topPad.style.height = '0px';
+                botPad.style.height = '0px';
                 preview.innerHTML = `<tr><td colspan="9" class="text-center py-8 text-slate-500 italic">No records match the current filters or search query.</td></tr>`;
+                if (liveRegion) liveRegion.textContent = 'No records match the current filters or search query.';
                 return;
             }
 
-            let currentIndex = 0;
-            const CHUNK_SIZE = 100;
+            const esc = s => String(s == null ? '' : s)
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
-            // FIX: Cancel any ongoing render loop to prevent old data from bleeding into new filters
-            if (window.bulkRenderFrame) {
-                cancelAnimationFrame(window.bulkRenderFrame);
+            const badge = v => !v ? ''
+                : (v.includes('Invalid') ? '<span class="px-2 py-1 rounded bg-rose-500/20 text-rose-300 border border-rose-500/30 text-[10px] uppercase font-bold tracking-wider">Invalid</span>'
+                : v.includes('Valid')    ? '<span class="px-2 py-1 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[10px] uppercase font-bold tracking-wider">Valid</span>'
+                : esc(v));
+
+            // P2-11 / A-9: data-copy + one delegated listener replaces an inline onclick per
+            // cell, and focus:opacity-100 makes the button reachable by keyboard.
+            const copyCell = v => !v ? '' :
+                `<div class="group flex items-center gap-2 font-mono"><span>${esc(v)}</span>` +
+                `<button type="button" data-copy="${esc(v)}" aria-label="Copy ${esc(v)}" class="opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity p-1 text-slate-400 hover:text-white bg-white/5 rounded">` +
+                `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg></button></div>`;
+
+            /* Browsers clamp scrollable height (Blink: ~33,554,432 px). At 37 px per row that
+               ceiling is hit around 9.07 lakh rows — below the 10 lakh target — and everything
+               past it becomes unreachable by scrolling. Above the ceiling the spacers are
+               compressed by `scale` and the row index is derived from the scroll fraction
+               instead of the raw offset. When scale === 1 the arithmetic below reduces exactly
+               to floor(scrollTop / ROW_H), so nothing changes for ordinary datasets. */
+            const MAX_SCROLL_PX = 30000000;
+            const VIRTUAL_H = Math.min(filteredRows.length * ROW_H, MAX_SCROLL_PX);
+            const scale = VIRTUAL_H / Math.max(1, filteredRows.length * ROW_H);
+
+            function paintWindow() {
+                try {
+                    const clientH = scroller.clientHeight;
+                    const visible = Math.max(1, Math.ceil(clientH / ROW_H));
+                    const maxFirst = Math.max(0, filteredRows.length - visible);
+                    const maxScrollTop = Math.max(1, VIRTUAL_H - clientH);
+                    const frac = Math.min(1, Math.max(0, scroller.scrollTop / maxScrollTop));
+                    const first = Math.max(0, Math.round(frac * maxFirst) - OVERSCAN);
+                    const count = visible + OVERSCAN * 2;
+                    const last  = Math.min(filteredRows.length, first + count);
+                    let html = '';
+                    for (let i = first; i < last; i++) {
+                        const r = filteredRows[i];
+                        html += '<tr style="height:' + ROW_H + 'px">'
+                          + '<td class="px-4 py-2 whitespace-nowrap text-slate-300">' + copyCell(r['UCIC']) + '</td>'
+                          + '<td class="px-4 py-2 whitespace-nowrap text-slate-300">' + esc(r['Individual or Entity']) + '</td>'
+                          + '<td class="px-4 py-2 whitespace-nowrap text-slate-300">' + esc(r['Country of Tax Residence']) + '</td>'
+                          + '<td class="px-4 py-2 whitespace-nowrap text-slate-300">' + esc(r['CTR Code']) + '</td>'
+                          + '<td class="px-4 py-2 whitespace-nowrap text-slate-300">' + copyCell(r['TIN Value']) + '</td>'
+                          + '<td class="px-4 py-2 whitespace-nowrap text-slate-300">' + badge(r['TIN validation remarks']) + '</td>'
+                          + '<td class="px-4 py-2 whitespace-nowrap text-slate-300">' + esc(r['TIN Modification Remarks']) + '</td>'
+                          + '<td class="px-4 py-2 whitespace-nowrap text-slate-300">' + copyCell(r['TIN Value Modified']) + '</td>'
+                          + '<td class="px-4 py-2 whitespace-nowrap text-slate-300">' + badge(r['TIN validation remarks on Modified TIN value']) + '</td>'
+                          + '</tr>';
+                    }
+                    const renderedPx = (last - first) * ROW_H;
+                    const topPx = Math.round(first * ROW_H * scale);
+                    topPad.style.height = topPx + 'px';
+                    botPad.style.height = Math.max(0, Math.round(VIRTUAL_H - renderedPx - topPx)) + 'px';
+                    preview.innerHTML = html;                 // ONE parse, ≤ 60 rows
+                } catch (err) {
+                    console.error('Preview render failed:', err);
+                    preview.innerHTML = '<tr><td colspan="9" class="text-center py-8 text-rose-300">Preview unavailable. Your results are intact — use Export results to download them.</td></tr>';
+                }
             }
 
-            function renderNextChunk() {
-                const fragment = document.createDocumentFragment();
-                const end = Math.min(currentIndex + CHUNK_SIZE, filteredRows.length);
-
-                for (let i = currentIndex; i < end; i++) {
-                    const r = filteredRows[i];
-                    const tr = document.createElement('tr');
-                    
-                    const getBadge = (val) => {
-                        if (!val) return '';
-                        if (val.includes('Valid') && !val.includes('Invalid')) return `<span class="px-2 py-1 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[10px] uppercase font-bold tracking-wider shadow-sm">Valid</span>`;
-                        if (val.includes('Invalid')) return `<span class="px-2 py-1 rounded bg-rose-500/20 text-rose-400 border border-rose-500/30 text-[10px] uppercase font-bold tracking-wider shadow-sm">Invalid</span>`;
-                        return val;
-                    };
-                    
-                    const withCopy = (val) => {
-                        if (!val) return '';
-                        return `<div class="group flex items-center gap-2 font-mono">
-                                    <span>${val}</span>
-                                    <button onclick="copyToClipboard('${val}', this)" class="opacity-0 group-hover:opacity-100 transition-opacity p-1 text-slate-400 hover:text-white bg-white/5 hover:bg-white/10 rounded" title="Copy to clipboard">
-                                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
-                                    </button>
-                                </div>`;
-                    };
-
-                    const cells = [ 
-                        withCopy(r['UCIC']), r['Individual or Entity'], r['Country of Tax Residence'], r['CTR Code'], 
-                        withCopy(r['TIN Value']), getBadge(r['TIN validation remarks']), r['TIN Modification Remarks'], 
-                        withCopy(r['TIN Value Modified']), getBadge(r['TIN validation remarks on Modified TIN value']) 
-                    ];
-                    
-                    cells.forEach(value => {
-                        const td = document.createElement('td');
-                        td.className = `px-4 py-3 whitespace-nowrap text-slate-300`;
-                        td.innerHTML = value;
-                        tr.appendChild(td);
-                    });
-                    fragment.appendChild(tr);
-                }
-                preview.appendChild(fragment);
-                currentIndex = end;
-                if (currentIndex < filteredRows.length) {
-                    window.bulkRenderFrame = requestAnimationFrame(renderNextChunk);
-                }
-            }
-            // FIX: Store the frame ID so it can be cancelled if the user clicks a filter
-            window.bulkRenderFrame = requestAnimationFrame(renderNextChunk);
+            let raf = 0;
+            scroller._tinScrollHandler = () => { if (!raf) raf = requestAnimationFrame(() => { raf = 0; paintWindow(); }); };
+            scroller.addEventListener('scroll', scroller._tinScrollHandler, { passive: true });
+            scroller.scrollTop = 0;
+            paintWindow();
+            // A-6: announce the new result count after each render.
+            if (liveRegion) liveRegion.textContent = `${filteredRows.length.toLocaleString('en-IN')} rows shown.`;
         }
 
-        window.downloadBulkOutput = function() {
-            // Use the currently filtered/searched data for export instead of the full dataset
-            const dataToExport = window.currentFilteredData && window.currentFilteredData.length > 0 
-                ? window.currentFilteredData 
-                : bulkOutputRows;
+        /* ── P1-E: safe download primitive. Deferring the revoke fixes the cancelled-download
+           race: revoking on the same synchronous tick as click() pulls the blob out from under
+           the browser's own asynchronous fetch of it. (E2, E7) ── */
+        function triggerDownload(blob, filename) {
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url; a.download = filename; a.rel = 'noopener'; a.style.display = 'none';
+            document.body.appendChild(a);                       // E7
+            a.click();
+            setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 60000);   // E2 — 60 s, not 0 ms
+        }
 
-            if (!dataToExport.length) return showToast('There are no results to export.', true);
-            
-            const type = document.getElementById('bulk-export-format').value;
-            const stamp = new Date().toISOString().slice(0, 10);
-            const timeStampFull = new Date().toLocaleString('en-US');
-            const filename = `${bulkSourceName}_Export_${window.currentBulkFilter}_${stamp}`;
-            const operator = sessionStorage.getItem('tin_dashboard_user') || 'Authorized User';
+        const SANITISE = /[\x00-\x1F\x7F-\x9F]/g;
+        const XLSX_ROW_LIMIT = 100000;                          // measured-safe ceiling; 2 lakh OOMs
 
-            const sanitizedData = dataToExport.map(row => {
-                const cleanRow = {};
-                for (const key in row) { cleanRow[key] = String(row[key] || '').replace(/[\x00-\x1F\x7F-\x9F]/g, ''); }
-                return cleanRow;
-            });
+        window.downloadBulkOutput = async function () {
+            const btn = document.querySelector('button[onclick="downloadBulkOutput()"]');
+            // E6: an active filter must export the filtered set; no filter must export everything.
+            // The old `length > 0 ? filtered : all` silently exported the full dataset whenever a
+            // filter matched zero rows, and silently exported a subset whenever one was active.
+            const filterActive = window.currentBulkFilter !== 'all' || !!window.currentBulkSearch;
+            const dataToExport = filterActive ? (window.currentFilteredData || []) : bulkOutputRows;
 
-            if (type === 'csv' || type === 'txt') {
-                // CSV doesn't support multiple sheets, export data only with BOM
-                const delimiter = type === 'csv' ? ',' : '\t';
-                const esc = value => `"${value.replace(/"/g, '""')}"`;
-                const content = [BULK_HEADERS, ...sanitizedData.map(r => BULK_HEADERS.map(h => r[h]))]
-                    .map(r => r.map(esc).join(delimiter)).join('\r\n');
-                
-                const blob = new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), content], { type: 'text/csv;charset=utf-8' });
-                const link = document.createElement('a'); 
-                link.href = URL.createObjectURL(blob); link.download = `${filename}.${type}`; 
-                link.click(); URL.revokeObjectURL(link.href); 
-            } else {
-                try {
-                    // Generate Data Sheet
-                    const dataSheet = XLSX.utils.json_to_sheet(sanitizedData, { header: BULK_HEADERS });
-                    
-                    // Generate Audit Trail Sheet
-                    const totalRows = bulkOutputRows.length;
-                    const valid = bulkOutputRows.filter(r => r['TIN validation remarks'] === 'TIN structure is Valid').length;
-                    const fixed = bulkOutputRows.filter(r => r['TIN Value Modified'] !== '').length;
-                    
-                    const auditData = [
-                        { "Metric": "Report Generated", "Value": timeStampFull },
-                        { "Metric": "Operator", "Value": operator },
-                        { "Metric": "Source File", "Value": bulkSourceName },
-                        { "Metric": "Validation Engine", "Value": "OECD Global TIN Dataset" },
-                        { "Metric": "Total Records Processed", "Value": totalRows },
-                        { "Metric": "Valid Records (Base)", "Value": valid },
-                        { "Metric": "Invalid Records (Base)", "Value": totalRows - valid },
-                        { "Metric": "Modifications Proposed", "Value": fixed }
-                    ];
-                    
-                    const auditSheet = XLSX.utils.json_to_sheet(auditData);
-                    
-                    // Set column widths for better readability
-                    auditSheet['!cols'] = [{ wch: 25 }, { wch: 40 }];
-                    dataSheet['!cols'] = [{ wch: 15 }, { wch: 15 }, { wch: 25 }, { wch: 10 }, { wch: 20 }, { wch: 25 }, { wch: 45 }, { wch: 20 }, { wch: 35 }];
+            if (!dataToExport.length) {
+                return showToast(filterActive
+                    ? 'The current filter matches no rows. Clear the filter to export the full set.'
+                    : 'There are no results to export.', true);
+            }
 
-                    // Assemble Multi-Sheet Workbook
-                    const workbook = XLSX.utils.book_new(); 
-                    XLSX.utils.book_append_sheet(workbook, dataSheet, 'Validated_Data');
-                    XLSX.utils.book_append_sheet(workbook, auditSheet, 'Audit_Trail');
-                    
-                    XLSX.writeFile(workbook, `${filename}.${type}`, { bookType: type });
-                } catch (err) { 
-                    showToast(`${type.toUpperCase()} export is unavailable. Please export as CSV instead.`, true); 
+            const type   = document.getElementById('bulk-export-format').value;
+            const stamp  = new Date().toISOString().slice(0, 10);
+            const filename = `${bulkSourceName}_Export_${window.currentBulkFilter}_${stamp}.${type}`;
+
+            if ((type === 'xlsx' || type === 'xlsb') && dataToExport.length > XLSX_ROW_LIMIT) {   // E1
+                return showToast(`${dataToExport.length.toLocaleString()} rows exceeds the ${XLSX_ROW_LIMIT.toLocaleString()}-row limit for in-browser ${type.toUpperCase()}. Select .csv — it opens directly in Excel.`, true);
+            }
+
+            if (btn) { btn.disabled = true; btn.textContent = 'Preparing export…'; }
+            try {
+                if (type === 'csv' || type === 'txt') {
+                    const blob = await buildDelimitedBlob(dataToExport, type === 'csv' ? ',' : '\t');
+                    triggerDownload(blob, filename);
+                    showToast(`Export ready: ${dataToExport.length.toLocaleString()} rows.`);
+                } else {
+                    await buildWorkbookAndDownload(dataToExport, type, filename);
                 }
+                bulkExportCompleted = true;                     // P2-8: clears the beforeunload guard
+            } catch (err) {
+                console.error('Export failed:', err);           // E8
+                const oom = err instanceof RangeError || /allocation|memory|heap|invalid string length/i.test(err.message || '');
+                showToast(oom
+                    ? `Not enough browser memory for ${dataToExport.length.toLocaleString()} rows. Use "Errors Only" to export a smaller slice, or split the source workbook.`
+                    : `Export failed: ${err.message || 'unknown error'}. Try .csv format.`, true);
+            } finally {
+                if (btn) { btn.disabled = false; updateExportButtonLabel(); }
             }
         };
+
+        /* Chunked, yielding CSV/TSV builder. Never materialises one giant string (E3/E4/E5):
+           the old path built the whole file as a single 146 M-character string, and threw a hard
+           RangeError above ~36.5 lakh rows — with no try/catch anywhere to surface it. */
+        async function buildDelimitedBlob(rows, delimiter) {
+            const parts = [new Uint8Array([0xEF, 0xBB, 0xBF])];              // UTF-8 BOM for Excel
+            const esc = v => '"' + String(v == null ? '' : v).replace(SANITISE, '').replace(/"/g, '""') + '"';
+            parts.push(BULK_HEADERS.map(esc).join(delimiter) + '\r\n');
+            const CHUNK = 20000;
+            for (let i = 0; i < rows.length; i += CHUNK) {
+                const end = Math.min(i + CHUNK, rows.length);
+                let buf = '';
+                for (let j = i; j < end; j++) {
+                    const r = rows[j];
+                    for (let c = 0; c < BULK_HEADERS.length; c++) {
+                        buf += esc(r[BULK_HEADERS[c]]);
+                        buf += (c === BULK_HEADERS.length - 1) ? '\r\n' : delimiter;
+                    }
+                }
+                parts.push(buf);                                              // Blob accepts an array of parts
+                await yieldToBrowser();                                       // UI stays live throughout
+            }
+            return new Blob(parts, { type: delimiter === ',' ? 'text/csv;charset=utf-8' : 'text/plain;charset=utf-8' });
+        }
+
+        /* XLSX/XLSB with an explicit fallback to CSV rather than a dead end.
+           XLSX.write(..., {type:'array'}) rather than XLSX.writeFile, so the anchor lifecycle
+           (and therefore the revoke timing) stays under our control and partial failures are catchable. */
+        async function buildWorkbookAndDownload(rows, type, filename) {
+            if (!window.XLSX) throw new Error('The spreadsheet library did not load');
+            await yieldToBrowser();                                           // let the "Preparing…" label paint
+            try {
+                const data = rows.map(r => {
+                    const o = {};
+                    for (const h of BULK_HEADERS) o[h] = String(r[h] || '').replace(SANITISE, '');
+                    return o;
+                });
+                const ws = XLSX.utils.json_to_sheet(data, { header: BULK_HEADERS });
+                ws['!cols'] = [15, 15, 25, 10, 20, 25, 45, 20, 35].map(wch => ({ wch }));
+
+                let valid = 0, fixed = 0;
+                for (const r of bulkOutputRows) {
+                    if (r['TIN validation remarks'] === 'TIN structure is Valid') valid++;
+                    if (r['TIN Value Modified'] !== '') fixed++;
+                }
+                const audit = XLSX.utils.json_to_sheet([
+                    { Metric: 'Report Generated', Value: new Date().toLocaleString('en-IN') },
+                    { Metric: 'Operator', Value: (() => { try { return sessionStorage.getItem('tin_dashboard_user') || 'Authorized User'; } catch (e) { return 'Authorized User'; } })() },
+                    { Metric: 'Source File', Value: bulkSourceName },
+                    { Metric: 'Validation Engine', Value: 'OECD Global TIN Dataset' },
+                    { Metric: 'Rows in this export', Value: rows.length },
+                    { Metric: 'Filter applied', Value: window.currentBulkFilter + (window.currentBulkSearch ? ` / search "${window.currentBulkSearch}"` : '') },
+                    { Metric: 'Total Records Processed', Value: bulkOutputRows.length },
+                    { Metric: 'Valid Records (Base)', Value: valid },
+                    { Metric: 'Invalid Records (Base)', Value: bulkOutputRows.length - valid },
+                    { Metric: 'Modifications Proposed', Value: fixed }
+                ]);
+                audit['!cols'] = [{ wch: 25 }, { wch: 45 }];
+
+                const wb = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(wb, ws, 'Validated_Data');
+                XLSX.utils.book_append_sheet(wb, audit, 'Audit_Trail');
+
+                const out = XLSX.write(wb, { bookType: type, type: 'array' });
+                triggerDownload(new Blob([out], { type: 'application/octet-stream' }), filename);
+                showToast(`Export ready: ${rows.length.toLocaleString()} rows across 2 sheets.`);
+            } catch (err) {
+                console.error(`${type} export failed, falling back to CSV:`, err);
+                const blob = await buildDelimitedBlob(rows, ',');
+                triggerDownload(blob, filename.replace(/\.[^.]+$/, '.csv'));
+                showToast(`${type.toUpperCase()} export was not possible (${err.message || 'memory limit'}). A .csv file was downloaded instead.`, true);
+            }
+        }
         function setupBulkInterface() {
             const input = document.getElementById('bulk-file-input'), zone = document.getElementById('bulk-dropzone');
-            input.addEventListener('change', e => readBulkFile(e.target.files[0]));
-            zone.addEventListener('click', () => input.click());
+
+            // P2-5: clear the value first. 'change' does not fire when the same file is picked
+            // twice, so re-uploading a workbook after fixing its headers used to do nothing.
+            input.addEventListener('change', e => {
+                const f = e.target.files[0];
+                e.target.value = '';
+                if (f) readBulkFile(f);
+            });
+
+            // P2-7: the input lives inside the zone, so the synthetic click bubbles back here.
+            zone.addEventListener('click', e => { if (e.target !== input) input.click(); });
             zone.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); input.click(); } });
             ['dragenter', 'dragover'].forEach(event => zone.addEventListener(event, e => { e.preventDefault(); zone.classList.add('dragover'); }));
             ['dragleave', 'drop'].forEach(event => zone.addEventListener(event, e => { e.preventDefault(); zone.classList.remove('dragover'); }));
-            zone.addEventListener('drop', e => readBulkFile(e.dataTransfer.files[0]));
+            // P2-6: dropping a URL, a folder or plain text yields no file — do not read undefined.
+            zone.addEventListener('drop', e => {
+                const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+                if (f) readBulkFile(f);
+            });
+
+            // P4-1: debounce the search. The old onkeyup re-filtered and re-rendered the entire
+            // dataset on every keystroke — typing "SINGAPORE" was nine full passes.
+            const search = document.getElementById('bulk-search-input');
+            let searchTimer = null;
+            search.addEventListener('input', e => {
+                clearTimeout(searchTimer);
+                const v = e.target.value;
+                searchTimer = setTimeout(() => handleBulkSearch(v), 250);
+            });
+
+            setupModeTabKeyboard();   // A-5
             try { if (localStorage.getItem('tin_theme') === 'light') toggleTheme(); } catch (e) {}
         }
 
-        const originalInitApp = initApp;
-        initApp = function() { originalInitApp(); setupBulkInterface(); };
         window.addEventListener('DOMContentLoaded', initApp);
     </script>
 </body>
