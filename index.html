@@ -267,11 +267,67 @@
         .bulk-dropzone.dragover { border-color: #38bdf8; background: rgba(14, 165, 233, .12); transform: scale(1.01); }
         /* A-7: the dropzone is role="button" tabindex="0" — it needs a visible focus ring */
         .bulk-dropzone:focus-visible { outline: 3px solid #38bdf8; outline-offset: 3px; }
-        /* R-3 + P1-C: fluid scroller height, and containment scopes layout/paint invalidation to the scroller */
-        .bulk-table-wrap { max-height: min(60vh, 620px); overflow: auto; contain: content; }
-        /* P1-C: a fixed row height is what makes the virtual-window arithmetic exact */
-        .bulk-table td { height: 37px; }
+        /* R-3 + P1-C: fluid scroller height, and containment scopes layout/paint invalidation to the scroller.
+           S3-d: scroll anchoring actively fights a virtualiser — it re-adjusts scrollTop when we swap
+           the rendered window, which is exactly the "content jumps under the cursor" symptom. */
+        .bulk-table-wrap { max-height: min(60vh, 620px); overflow: auto; contain: content; overflow-anchor: none; overscroll-behavior: contain; }
+
+        /* ── S3-c: table-layout:fixed. With the default `auto`, every innerHTML/DOM swap made the
+           engine re-measure all nine columns against the new content — a full table re-layout on
+           every scroll frame, and visibly jittering column widths as longer remarks scrolled in.
+           Fixed layout takes widths from the header row alone and never re-measures. ── */
+        /* S3-e: widths are PIXELS, not percentages, and the table carries a min-width so the
+           scroller pans horizontally instead of crushing nine columns into the panel width.
+           The first attempt used percentages with width:100%, which squeezed CTR Code to ~55px
+           and truncated two-character country codes to "C…". Fixed layout still applies — it is
+           what keeps the per-frame re-measure away — it just no longer implies a cramped table.
+           Sum below = 1450px; on a 1080p panel that means a short horizontal pan, on 1440p+ none. */
+        .bulk-table { table-layout: fixed; width: 100%; min-width: 1450px; }
+        .bulk-table th:nth-child(1), .bulk-table td:nth-child(1) { width: 155px; }   /* UCIC          */
+        .bulk-table th:nth-child(2), .bulk-table td:nth-child(2) { width: 115px; }   /* Type          */
+        .bulk-table th:nth-child(3), .bulk-table td:nth-child(3) { width: 155px; }   /* Country       */
+        .bulk-table th:nth-child(4), .bulk-table td:nth-child(4) { width: 105px; }   /* CTR Code      */
+        .bulk-table th:nth-child(5), .bulk-table td:nth-child(5) { width: 195px; }   /* TIN Value     */
+        .bulk-table th:nth-child(6), .bulk-table td:nth-child(6) { width: 105px; }   /* Validation    */
+        .bulk-table th:nth-child(7), .bulk-table td:nth-child(7) { width: 310px; }   /* Mod Remarks   */
+        .bulk-table th:nth-child(8), .bulk-table td:nth-child(8) { width: 185px; }   /* Modified TIN  */
+        .bulk-table th:nth-child(9), .bulk-table td:nth-child(9) { width: 125px; }   /* Mod Validation*/
+
+        /* S3-e: three-line mode. Row height stays UNIFORM (every row is clamped to exactly three
+           lines whether it needs them or not), so the virtual-scroll arithmetic is untouched —
+           the measured-ROW_H step picks the new height up automatically on the next render. */
+        .bulk-table.rows-expanded td { height: 64px; }
+        .bulk-table.rows-expanded .tin-cell-text {
+            white-space: normal;
+            display: -webkit-box;
+            -webkit-line-clamp: 3;
+            line-clamp: 3;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+
+        /* P1-C: a fixed row height is what makes the virtual-window arithmetic exact.
+           S3-a: `height` on a td is a MINIMUM, not a fixed size. The old copy button was an
+           in-flow flex child 22px tall, which with py-2 (16px) forced every row containing a
+           UCIC/TIN/Modified-TIN to 38px while the spacer maths advanced at 37px — a 1px/row
+           drift that read as "content scrolls faster than the scrollbar, then snaps".
+           The button is now absolutely positioned, so nothing in the cell exceeds the
+           16px line-box + 16px padding = 32px, and the 37px minimum governs every row.
+           box-sizing is asserted because Tailwind's preflight is the only thing setting it. */
+        .bulk-table td { height: 37px; box-sizing: border-box; position: relative; overflow: hidden; text-overflow: ellipsis; }
         .bulk-table th { position: sticky; top: 0; z-index: 1; }
+
+        /* S3-a: copy button lifted out of flow so it cannot contribute to row height. */
+        .tin-copy { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); line-height: 0; }
+        .tin-copy button { opacity: 0; transition: opacity .15s ease; }
+        .bulk-table td:hover .tin-copy button, .tin-copy button:focus-visible { opacity: 1; }
+        /* Only the three copy-enabled columns need to reserve room for the button. */
+        .tin-cell-text { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .bulk-table td:nth-child(1) .tin-cell-text,
+        .bulk-table td:nth-child(5) .tin-cell-text,
+        .bulk-table td:nth-child(8) .tin-cell-text { padding-right: 22px; }
+        /* S3-e: a truncated cell advertises itself, so the tooltip is discoverable. */
+        .bulk-table td[title] { cursor: help; }
 
         /* Scrollbar Styling */
         .bulk-table-wrap::-webkit-scrollbar { width: 8px; height: 8px; }
@@ -285,6 +341,8 @@
            a ~1,400px horizontal scroll inside a vertical scroller. Both columns remain
            in every export. */
         @media (max-width: 1023px) {
+            /* Two columns are hidden here, so the table's floor drops with them. */
+            .bulk-table { min-width: 985px; }
             .bulk-table th:nth-child(3), .bulk-table td:nth-child(3),
             .bulk-table th:nth-child(7), .bulk-table td:nth-child(7) { display: none; }
         }
@@ -440,6 +498,14 @@
     <div class="bg-orb orb-3"></div>
     
     <!-- Custom Toast Container (replaces alerts) -->
+    <!-- S3-b: one shared icon definition. The preview previously inlined a full <svg><path> into
+         every copy button, so a 60-row window re-parsed ~180 SVG nodes on each scroll frame.
+         A single <symbol> referenced by <use> makes each button two nodes instead. -->
+    <svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true" focusable="false">
+        <symbol id="ico-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></symbol>
+        <symbol id="ico-check" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></symbol>
+    </svg>
+
     <!-- A-3: two live regions — polite for informational toasts, assertive for errors -->
     <div class="fixed bottom-4 right-4 z-[9999] flex flex-col gap-2 pointer-events-none">
         <div id="toast-container" role="status" aria-live="polite" aria-atomic="false" class="flex flex-col gap-2"></div>
@@ -692,6 +758,15 @@
                             <h2 id="bulk-title" class="text-2xl font-bold text-white mt-2">Bulk TIN validation</h2>
                             <p class="text-slate-400 text-sm mt-2 max-w-2xl">Upload a workbook, confirm its mandatory headers, then validate each row against the embedded OECD country and taxpayer-type format rules.</p>
                         </div>
+                        <!-- S1: blank input template. Ships embedded in this file, so it works offline. -->
+                        <div class="shrink-0">
+                            <button type="button" id="bulk-template-btn" onclick="downloadBulkTemplate()"
+                                    class="inline-flex items-center gap-2 rounded-lg border border-sky-500/40 bg-sky-500/10 px-4 py-2.5 text-sm font-bold text-sky-200 transition-colors hover:bg-sky-500/20 min-h-[44px]">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3M3 17V7a2 2 0 012-2h5l2 2h7a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></svg>
+                                Download blank template
+                            </button>
+                            <p class="text-[11px] text-slate-500 mt-1.5 text-center">.xlsx · pre-formatted as text</p>
+                        </div>
                     </div>
                     <div id="bulk-dropzone" role="button" tabindex="0" aria-label="Choose an XLSX or XLSB workbook" class="bulk-dropzone mt-7 rounded-2xl border-2 border-dashed border-sky-500/40 bg-slate-900/30 p-8 text-center transition cursor-pointer">
                         <input id="bulk-file-input" type="file" accept=".xlsx,.xlsb,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel.sheet.binary.macroEnabled.12" class="hidden">
@@ -701,8 +776,8 @@
                     </div>
                     <div class="mt-5 grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
                         <div class="rounded-lg border border-white/10 bg-slate-900/30 p-3 text-slate-300"><b class="text-white">Required headers</b><br>Exact header names UCIC, Individual or Entity, Country of Tax Residence, CTR code, TIN value, TIN validation remarks, TIN Modification Remarks, TIN Value Modified, TIN validation remarks on Modified TIN value, these header are mandatory & checked before processing.</div>
-                        <div class="rounded-lg border border-white/10 bg-slate-900/30 p-3 text-slate-300"><b class="text-white">Safe correction</b><br>Only punctuation and whitespace edits are suggested; source values remain unchanged.</div>
-                        <div class="rounded-lg border border-white/10 bg-slate-900/30 p-3 text-slate-300"><b class="text-white">Scale-aware UI</b><br>Progressive processing and a capped preview keep the dashboard responsive.</div>
+                        <div class="rounded-lg border border-white/10 bg-slate-900/30 p-3 text-slate-300"><b class="text-white">Taxpayer type</b><br>The <i>Individual or Entity</i> column accepts <b class="text-white">Individual</b> or <b class="text-white">Proprietorship</b> (individual rules) and <b class="text-white">Entity</b> or <b class="text-white">Non-Individual</b> (entity rules). Case, spacing and hyphens are ignored, so INDIVIDUAL and non individual both work.</div>
+                        <div class="rounded-lg border border-white/10 bg-slate-900/30 p-3 text-slate-300"><b class="text-white">Safe correction</b><br>Only punctuation and whitespace edits are suggested; source values remain unchanged. Progressive processing and a windowed preview keep the dashboard responsive at 10 lakh rows.</div>
                     </div>
                 </div>
                 <!-- A-4: header-validation failures must be announced, not just shown -->
@@ -738,22 +813,45 @@
                             <button onclick="applyBulkFilter('all')" id="filter-btn-all" class="text-xs font-bold px-3 py-1.5 rounded-md bg-blue-500/20 text-blue-300 border border-blue-500/30 transition-colors">Show All</button>
                             <button onclick="applyBulkFilter('errors')" id="filter-btn-errors" class="text-xs font-bold px-3 py-1.5 rounded-md bg-slate-700/50 text-slate-400 hover:text-rose-300 transition-colors">Errors Only</button>
                             <button onclick="applyBulkFilter('mods')" id="filter-btn-mods" class="text-xs font-bold px-3 py-1.5 rounded-md bg-slate-700/50 text-slate-400 hover:text-amber-300 transition-colors">Modifications Only</button>
+                            <!-- S3-e: three-line mode for the long remark columns. Every row is clamped to
+                                 the same height, so the virtual scroller stays exact. -->
+                            <button type="button" onclick="toggleBulkRowHeight()" id="bulk-rowheight-btn" aria-pressed="false"
+                                    class="text-xs font-bold px-3 py-1.5 rounded-md bg-slate-700/50 text-slate-400 hover:text-sky-300 transition-colors inline-flex items-center gap-1.5">
+                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
+                                Expand rows
+                            </button>
                         </div>
                         <div class="relative w-full md:w-64">
                             <svg class="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
                             <label for="bulk-search-input" class="sr-only">Search UCIC or TIN</label>
-                            <input type="text" id="bulk-search-input" placeholder="Search UCIC or TIN..." class="w-full bg-slate-900/50 border border-white/10 rounded-lg pl-9 pr-3 py-1.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500/50 transition-colors">
+                            <input type="text" id="bulk-search-input" placeholder="Search UCIC or TIN..." autocomplete="off" class="w-full bg-slate-900/50 border border-white/10 rounded-lg pl-9 pr-10 py-1.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500/50 transition-colors">
+                            <!-- S5: clear control. type="search" is not used — Firefox renders no glyph and
+                                 the WebKit one cannot be themed for this dark UI. -->
+                            <button type="button" id="bulk-search-clear" onclick="clearBulkSearch()" aria-label="Clear search"
+                                    class="hidden absolute right-1 top-1/2 -translate-y-1/2 h-8 w-8 items-center justify-center rounded-md text-slate-400 hover:text-white hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-colors">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12"/></svg>
+                            </button>
                         </div>
                     </div>
 
                     <!-- §3.5: the export control sits BELOW the filters that determine what it contains,
                          and its label states the exact row count that will be written to the file. -->
-                    <div class="px-6 py-3 border-b border-white/5 bg-slate-900/20 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                        <p class="text-xs text-slate-400">The export contains exactly the rows listed below.</p>
-                        <div class="flex flex-wrap gap-2">
+                    <div class="px-6 py-3 border-b border-white/5 bg-slate-900/20 flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+                        <div class="max-w-xl">
+                            <p class="text-xs text-slate-400">The export contains exactly the rows listed below.</p>
+                            <!-- S7-3: the leading-zero caveat is format-specific, so it is stated at the
+                                 moment of choosing rather than buried in documentation. -->
+                            <p id="bulk-export-note" class="text-[11px] mt-1 leading-relaxed"></p>
+                        </div>
+                        <div class="flex flex-wrap gap-2 shrink-0">
                             <label for="bulk-export-format" class="sr-only">Export file format</label>
-                            <select id="bulk-export-format" class="glass-input rounded-lg px-3 py-2 text-sm"><option value="xlsx">.xlsx</option><option value="xlsb">.xlsb</option><option value="csv">.csv</option><option value="txt">.txt</option></select>
-                            <button onclick="downloadBulkOutput()" class="rounded-lg bg-emerald-600 hover:bg-emerald-500 px-4 py-2 text-sm font-bold text-white shadow-lg transition-transform hover:-translate-y-0.5">Export results</button>
+                            <select id="bulk-export-format" class="glass-input rounded-lg px-3 py-2 text-sm">
+                                <option value="xlsx">.xlsx — Excel (recommended)</option>
+                                <option value="xlsb">.xlsb — Excel Binary</option>
+                                <option value="csv">.csv — import as Text</option>
+                                <option value="txt">.txt — tab-delimited</option>
+                            </select>
+                            <button id="bulk-export-btn" onclick="downloadBulkOutput()" class="rounded-lg bg-emerald-600 hover:bg-emerald-500 px-4 py-2 text-sm font-bold text-white shadow-lg transition-transform hover:-translate-y-0.5 disabled:opacity-60 disabled:cursor-not-allowed disabled:translate-y-0">Export results</button>
                         </div>
                     </div>
 
@@ -761,18 +859,21 @@
                     <div id="bulk-preview-live" class="sr-only" aria-live="polite"></div>
 
                     <div class="bulk-table-wrap">
-                        <table class="bulk-table min-w-full text-left text-xs">
+                        <!-- S3-e: `min-w-full` removed. Tailwind's .min-w-full{min-width:100%} has the
+                             same specificity as .bulk-table but is injected later by the CDN runtime,
+                             so it silently won and re-crushed the columns back to panel width. -->
+                        <table class="bulk-table text-left text-xs">
                             <thead class="bg-slate-900/95 text-slate-300">
                                 <tr>
-                                    <th scope="col" class="px-4 py-3 whitespace-nowrap">UCIC</th>
-                                    <th scope="col" class="px-4 py-3 whitespace-nowrap">Type</th>
-                                    <th scope="col" class="px-4 py-3 whitespace-nowrap">Country of Tax Residence</th>
-                                    <th scope="col" class="px-4 py-3 whitespace-nowrap">CTR Code</th>
-                                    <th scope="col" class="px-4 py-3 whitespace-nowrap">TIN Value</th>
-                                    <th scope="col" class="px-4 py-3 whitespace-nowrap">TIN Validation</th>
-                                    <th scope="col" class="px-4 py-3 whitespace-nowrap">Modification Remarks</th>
-                                    <th scope="col" class="px-4 py-3 whitespace-nowrap">Modified TIN</th>
-                                    <th scope="col" class="px-4 py-3 whitespace-nowrap">Modified Validation</th>
+                                    <th scope="col" class="px-3 py-3 whitespace-nowrap">UCIC</th>
+                                    <th scope="col" class="px-3 py-3 whitespace-nowrap">Type</th>
+                                    <th scope="col" class="px-3 py-3 whitespace-nowrap">Country of Tax Residence</th>
+                                    <th scope="col" class="px-3 py-3 whitespace-nowrap">CTR Code</th>
+                                    <th scope="col" class="px-3 py-3 whitespace-nowrap">TIN Value</th>
+                                    <th scope="col" class="px-3 py-3 whitespace-nowrap">TIN Validation</th>
+                                    <th scope="col" class="px-3 py-3 whitespace-nowrap">Modification Remarks</th>
+                                    <th scope="col" class="px-3 py-3 whitespace-nowrap">Modified TIN</th>
+                                    <th scope="col" class="px-3 py-3 whitespace-nowrap">Modified Validation</th>
                                 </tr>
                             </thead>
                             <!-- P1-C: spacer rows above and below the rendered window carry the scroll height -->
@@ -787,7 +888,7 @@
 
         <footer id="dashboard-footer" class="w-full py-4 text-center z-40 border-t border-white/10 bg-slate-900/90 backdrop-blur-md mt-auto">
             <p class="text-slate-300 text-sm md:text-base font-medium tracking-wide">
-                Developed by CA. Prasham Veer Jain <span class="mx-2 text-slate-500">|</span> <span class="text-slate-400">Enterprise Edition Version V2.0</span>
+                Developed by CA. Prasham Veer Jain <span class="mx-2 text-slate-500">|</span> <span class="text-slate-400">Enterprise Edition Version V3.0</span>
             </p>
         </footer>
     </div>
@@ -1994,7 +2095,9 @@ This number is granted by the DNIC (National Direction of Civil Identification),
 
         function runValidationEngine() {
             const country = state.selectedCountryData;
-            const primaryType = state.entityType === 'individual' ? 'Individual' : 'Entity';
+            // S2: single mode now derives its type through the same canonicaliser bulk mode uses,
+            // so the two modes cannot drift on what 'Individual' means.
+            const primaryType = canonicalType(state.entityType) || 'Individual';
             const oppositeType = primaryType === 'Individual' ? 'Entity' : 'Individual';
             const formatRaw = primaryType === 'Individual' ? country.formatIndRaw : country.formatEntRaw;
             const input = state.currentInput;
@@ -2208,6 +2311,50 @@ This number is granted by the DNIC (National Direction of Civil Identification),
 
         // Bulk validation is deliberately kept in-browser: no tax data is uploaded to a server.
         const BULK_HEADERS = ['UCIC', 'Individual or Entity', 'Country of Tax Residence', 'CTR Code', 'TIN Value', 'TIN validation remarks', 'TIN Modification Remarks', 'TIN Value Modified', 'TIN validation remarks on Modified TIN value'];
+
+        /* ── S2: canonical taxpayer type. ───────────────────────────────────────────────
+           The old check was `type !== 'Individual' && type !== 'Entity'` — exact and
+           case-sensitive — so a file exported from an upstream system that uppercases its
+           fields marked EVERY row invalid without ever testing the TIN.
+
+           Loosening that one comparison is not sufficient and is actively dangerous: the raw
+           string is also threaded into bulkFormats() (which picks the Individual vs Entity
+           format column by `type === 'Individual'`), into the FMT_CACHE key, and into the
+           `oppositeType` ternaries. A lowercase 'individual' would have silently fallen
+           through to the ENTITY ruleset and produced confidently wrong results.
+
+           So the value is canonicalised exactly once, here, and every downstream consumer
+           uses the canonical form. The ORIGINAL cell text is left untouched on the row so
+           the export still round-trips the customer's own data — this is an audit artefact.  */
+        const TYPE_CANON = new Map([
+            ['individual', 'Individual'],
+            ['proprietorship', 'Individual'],
+            ['soleproprietorship', 'Individual'],
+            ['proprietor', 'Individual'],
+            ['ind', 'Individual'],
+            ['entity', 'Entity'],
+            ['nonindividual', 'Entity'],
+            ['noninvidual', 'Entity'],      // observed upstream typo, kept deliberately
+            ['ent', 'Entity'],
+            ['corporate', 'Entity'],
+            ['company', 'Entity']
+        ]);
+        /* Strips case, surrounding space, and any internal spacing/punctuation, so
+           "Non-Individual", "non individual", "NON_INDIVIDUAL" and "nonIndividual"
+           all collapse to the same key. */
+        function canonicalType(value) {
+            const key = String(value == null ? '' : value)
+                .trim()
+                .toLowerCase()
+                .replace(/[\s._\-\/\\]+/g, '');
+            return TYPE_CANON.get(key) || null;
+        }
+
+        /* S4: one number formatter for the whole bulk UI. The summary panel previously mixed
+           .toLocaleString('en-IN') for the speed figure with bare .toLocaleString() everywhere
+           else, so the same card could read "5,83,000" next to "100,000". This app already
+           speaks in lakh elsewhere ("files of 5,00,000 rows or fewer"), so en-IN wins. */
+        function nfIN(n) { return Number(n || 0).toLocaleString('en-IN'); }
         let bulkOutputRows = [], bulkSourceName = 'OECD_TIN_validation';
         let bulkAborted = false;            // P1-B: set by the Cancel button
         let bulkExportCompleted = false;    // P2-8: clears the beforeunload guard once a file is produced
@@ -2221,7 +2368,12 @@ This number is granted by the DNIC (National Direction of Civil Identification),
             return () => new Promise(res => { ch.port1.onmessage = () => res(); ch.port2.postMessage(0); });
         })();
 
-        // Timer variables for bulk validation
+        /* Timer variables for bulk validation.
+           S4-b: these were Date.now(). Date.now() is wall-clock — it is quantised to ~15.6 ms on
+           Windows (≈9% error on a 170 ms measurement) and it jumps if the OS applies an NTP
+           correction mid-run. performance.now() is monotonic and sub-millisecond, and the
+           validation loop was already using it for its slice budget. */
+        const nowMs = () => performance.now();
         let bulkValidationStartTime = null;
         let bulkValidationReadingStartTime = null;
         let bulkValidationReadingEndTime = null;
@@ -2229,6 +2381,11 @@ This number is granted by the DNIC (National Direction of Civil Identification),
         let bulkValidationProcessingEndTime = null;
         let bulkValidationTimerInterval = null;
         let bulkValidationTotalRows = 0;
+        /* S4-c: the rate's numerator must describe the same population its denominator timed.
+           `bulkValidationTotalRows` counts RECORDS PRODUCED (blank rows are skipped), while the
+           timed loop iterated every row in the sheet range including the blanks. Tracking both
+           separately keeps each rate internally consistent. */
+        let bulkValidationRowsScanned = 0;
 
         function formatTimerDisplay(ms) {
             const totalSeconds = Math.floor(ms / 1000);
@@ -2241,8 +2398,8 @@ This number is granted by the DNIC (National Direction of Civil Identification),
            Kept separate from the interval below because the interval cannot be relied on
            during a bulk run — see the note in startBulkValidationTimer. */
         function updateBulkTimerDisplay() {
-            if (!bulkValidationStartTime) return;
-            const formatted = formatTimerDisplay(Date.now() - bulkValidationStartTime);
+            if (bulkValidationStartTime == null) return;
+            const formatted = formatTimerDisplay(nowMs() - bulkValidationStartTime);
             const display = document.getElementById('bulk-timer-display');
             const progressTimer = document.getElementById('bulk-progress-timer');
             if (display) display.textContent = formatted;
@@ -2250,12 +2407,12 @@ This number is granted by the DNIC (National Direction of Civil Identification),
         }
 
         function startBulkValidationTimer(isReading = false) {
-            if (!bulkValidationStartTime) {
-                bulkValidationStartTime = Date.now();
+            if (bulkValidationStartTime == null) {
+                bulkValidationStartTime = nowMs();
             }
 
             if (isReading) {
-                bulkValidationReadingStartTime = Date.now();
+                bulkValidationReadingStartTime = nowMs();
             }
 
             document.getElementById('bulk-timer-widget').classList.remove('hidden');
@@ -2271,24 +2428,29 @@ This number is granted by the DNIC (National Direction of Civil Identification),
         }
 
         function stopBulkValidationTimer(phase = null) {
-            if (phase === 'reading' && bulkValidationReadingStartTime) {
-                bulkValidationReadingEndTime = Date.now();
-            } else if (phase === 'processing' && bulkValidationProcessingStartTime) {
-                bulkValidationProcessingEndTime = Date.now();
+            if (phase === 'reading' && bulkValidationReadingStartTime != null) {
+                bulkValidationReadingEndTime = nowMs();
+            } else if (phase === 'processing' && bulkValidationProcessingStartTime != null) {
+                bulkValidationProcessingEndTime = nowMs();
             }
         }
 
+        /* S4: `totalTime` is frozen at the moment the run finished rather than recomputed from
+           "now", so a summary that is re-rendered later (or after the widget was torn down)
+           reports the same figure. `!= null` throughout because performance.now() legitimately
+           returns 0-ish values and the old truthiness checks would have discarded them. */
+        let bulkValidationTotalEndTime = null;
         function getValidationTimings() {
-            const readingTime = bulkValidationReadingEndTime && bulkValidationReadingStartTime 
-                ? (bulkValidationReadingEndTime - bulkValidationReadingStartTime) / 1000 
+            const readingTime = (bulkValidationReadingEndTime != null && bulkValidationReadingStartTime != null)
+                ? (bulkValidationReadingEndTime - bulkValidationReadingStartTime) / 1000
                 : 0;
-            const processingTime = bulkValidationProcessingEndTime && bulkValidationProcessingStartTime 
-                ? (bulkValidationProcessingEndTime - bulkValidationProcessingStartTime) / 1000 
+            const processingTime = (bulkValidationProcessingEndTime != null && bulkValidationProcessingStartTime != null)
+                ? (bulkValidationProcessingEndTime - bulkValidationProcessingStartTime) / 1000
                 : 0;
-            const totalTime = bulkValidationStartTime 
-                ? (Date.now() - bulkValidationStartTime) / 1000 
+            const totalTime = bulkValidationStartTime != null
+                ? ((bulkValidationTotalEndTime != null ? bulkValidationTotalEndTime : nowMs()) - bulkValidationStartTime) / 1000
                 : 0;
-            
+
             return { readingTime, processingTime, totalTime };
         }
 
@@ -2439,11 +2601,19 @@ This number is granted by the DNIC (National Direction of Civil Identification),
                 const h = BULK_HEADERS[i];
                 row[h] = source[h] == null ? '' : String(source[h]).trim();
             }
-            const ucic = row['UCIC'], type = row['Individual or Entity'], ctr = row['CTR Code'].toUpperCase();
+            const ucic = row['UCIC'], ctr = row['CTR Code'].toUpperCase();
             const country = countryByCode(ctr);
             const tinUC = row['TIN Value'].toUpperCase();
             const ucicInvalid = RX_UCIC_BAD.test(ucic);
-            const typeInvalid = type !== 'Individual' && type !== 'Entity';
+
+            /* S2: canonicalise once. `type` below is ALWAYS exactly 'Individual' or 'Entity'
+               (or the row is rejected), so every downstream consumer — bulkFormats, the
+               FMT_CACHE key, the oppositeType ternaries, the summary tallies — is safe.
+               `row.__type` is a non-exported key; the export writes BULK_HEADERS only, so the
+               user's original spelling in row['Individual or Entity'] survives untouched. */
+            const type = canonicalType(row['Individual or Entity']);
+            row.__type = type;
+            const typeInvalid = type === null;
             const residenceMissing = !!ucic && !row['Country of Tax Residence'];
 
             const valid = !ucicInvalid && !typeInvalid && !residenceMissing && !!country && isTinValid(tinUC, country, type);
@@ -2457,7 +2627,7 @@ This number is granted by the DNIC (National Direction of Civil Identification),
             } else if (ucicInvalid) {
                 row['TIN Modification Remarks'] = 'Invalid UCIC: special characters . ; + - ) are not permitted';
             } else if (typeInvalid) {
-                row['TIN Modification Remarks'] = 'Invalid Individual or Entity value: use Individual or Entity';
+                row['TIN Modification Remarks'] = 'Invalid Individual or Entity value: use Individual, Proprietorship, Entity or Non-Individual';
             } else if (residenceMissing) {
                 row['TIN Modification Remarks'] = 'Country of Tax Residence is required when UCIC is provided';
             } else if (!country) {
@@ -2509,8 +2679,10 @@ This number is granted by the DNIC (National Direction of Civil Identification),
             bulkValidationReadingEndTime = null;
             bulkValidationProcessingStartTime = null;
             bulkValidationProcessingEndTime = null;
+            bulkValidationTotalEndTime = null;
             bulkValidationTotalRows = 0;
-            
+            bulkValidationRowsScanned = 0;
+
             // Start timer NOW (includes reading time)
             startBulkValidationTimer(true);
             
@@ -2566,7 +2738,7 @@ This number is granted by the DNIC (National Direction of Civil Identification),
            chunk is a guess that either overruns the frame budget or wastes it; a time budget
            self-tunes to the dataset shape and the machine. ── */
         async function processBulkWorksheet(cellValue, firstRow, lastRow, firstColumn, index) {
-            bulkValidationProcessingStartTime = Date.now();
+            bulkValidationProcessingStartTime = nowMs();
             const progressCard = document.getElementById('bulk-progress-card');
             const bar    = document.getElementById('bulk-progress-bar');
             const pctEl  = document.getElementById('bulk-progress-percent');
@@ -2601,43 +2773,56 @@ This number is granted by the DNIC (National Direction of Civil Identification),
                     } while (row <= lastRow && performance.now() < slice);
 
                     const done = row - firstRow;
-                    const nowMs = performance.now();
+                    // S4-b: renamed from `nowMs` — that identifier is now the global
+                    // performance.now() helper, and shadowing it here was a trap waiting to fire.
+                    const tNow = performance.now();
                     // Throttle DOM writes by row count, but also refresh at least ~4x/sec so the
                     // elapsed-time clocks keep advancing even when rows are slow to read.
-                    if (done - lastPaint >= 5000 || nowMs - lastPaintAt >= 250 || row > lastRow) {
+                    if (done - lastPaint >= 5000 || tNow - lastPaintAt >= 250 || row > lastRow) {
                         const pct = Math.min(100, Math.round((done / Math.max(1, total)) * 100));
                         bar.style.width = pct + '%';
                         pctEl.textContent = pct + '%';
                         progressCard.setAttribute('aria-valuenow', String(pct));   // A-2
-                        label.textContent = `Validating ${done.toLocaleString()} of ${total.toLocaleString()} rows…`;
+                        label.textContent = `Validating ${nfIN(done)} of ${nfIN(total)} rows…`;
                         // The 100 ms interval in startBulkValidationTimer is starved by
                         // scheduler.yield() for this whole loop, so drive both clocks here.
                         updateBulkTimerDisplay();
                         lastPaint = done;
-                        lastPaintAt = nowMs;
+                        lastPaintAt = tNow;
                     }
                     await yieldToBrowser();
                 }
                 stopBulkValidationTimer('processing');
-                // P2-13: report throughput against the rows actually validated, so "Total Rows"
-                // and "rows/sec" agree when the sheet contains blank rows.
+                // P2-13 / S4-c: two populations, tracked separately. `RowsScanned` is what the
+                // timed loop actually iterated (blank rows included); `TotalRows` is what it
+                // produced. Dividing one by the other's elapsed time is what made the old
+                // "583,000 rows/sec" figure meaningless.
+                bulkValidationRowsScanned = Math.max(0, row - firstRow);
                 bulkValidationTotalRows = bulkOutputRows.length;
+                bulkValidationTotalEndTime = nowMs();
                 progressCard.classList.add('hidden');
                 renderBulkResults();
             } catch (err) {
                 console.error('Bulk validation failed at source row', row, err);
                 progressCard.classList.add('hidden');
-                hideBulkTimerWidget();                                     // P2-4
+                /* S4-d: ORDER MATTERS. hideBulkTimerWidget() nulls bulkValidationStartTime, and it
+                   used to run before renderBulkResults() — so after a Cancel the summary reported
+                   "Read 0.0s · Validated 0.0s · Total 0.0s · Speed 0 rows/sec" for a run that had
+                   genuinely processed rows. Close the timers honestly, render, THEN tear down. */
+                stopBulkValidationTimer('processing');
+                bulkValidationRowsScanned = Math.max(0, row - firstRow);
                 bulkValidationTotalRows = bulkOutputRows.length;
+                bulkValidationTotalEndTime = nowMs();
                 const partial = bulkOutputRows.length;
                 if (err.name === 'AbortError') {
-                    renderBulkStatus(`Validation cancelled. ${partial.toLocaleString()} rows were processed and are available for export.`, true);
+                    renderBulkStatus(`Validation cancelled. ${nfIN(partial)} rows were processed and are available for export.`, true);
                 } else if (err instanceof RangeError || /allocation|heap|memory/i.test(err.message || '')) {
-                    renderBulkStatus(`Out of memory after ${partial.toLocaleString()} rows. Split the workbook into files of 5,00,000 rows or fewer and retry.`, true);
+                    renderBulkStatus(`Out of memory after ${nfIN(partial)} rows. Split the workbook into files of 5,00,000 rows or fewer and retry.`, true);
                 } else {
-                    renderBulkStatus(`Validation stopped at source row ${row + 1}: ${err.message || 'unexpected error'}. ${partial.toLocaleString()} rows were processed.`, true);
+                    renderBulkStatus(`Validation stopped at source row ${row + 1}: ${err.message || 'unexpected error'}. ${nfIN(partial)} rows were processed.`, true);
                 }
                 if (partial) renderBulkResults();                          // fallback: show partial results
+                hideBulkTimerWidget();                                     // P2-4, now after the render
             } finally {
                 document.body.classList.remove('bulk-busy');
             }
@@ -2646,6 +2831,27 @@ This number is granted by the DNIC (National Direction of Civil Identification),
         window.currentBulkFilter = 'all';
         window.currentBulkSearch = '';
         window.currentFilteredData = []; // Global state for view-bound exports
+        let bulkSearchTimer = null;      // S5: shared so clearBulkSearch() can cancel a queued pass
+        let bulkRowsExpanded = false;    // S3-e: three-line row mode
+
+        /* S3-e: swap between one-line and three-line rows. Both modes keep every row the SAME
+           height as each other, which is the property the virtual scroller depends on — the
+           measured-ROW_H step in paintWindow() picks up the new height on the re-render, so no
+           constant here needs to know what the stylesheet chose. */
+        window.toggleBulkRowHeight = function () {
+            bulkRowsExpanded = !bulkRowsExpanded;
+            const table = document.querySelector('.bulk-table');
+            const btn = document.getElementById('bulk-rowheight-btn');
+            if (table) table.classList.toggle('rows-expanded', bulkRowsExpanded);
+            if (btn) {
+                btn.setAttribute('aria-pressed', String(bulkRowsExpanded));
+                btn.lastChild.textContent = bulkRowsExpanded ? ' Collapse rows' : ' Expand rows';
+                btn.className = bulkRowsExpanded
+                    ? 'text-xs font-bold px-3 py-1.5 rounded-md bg-sky-500/20 text-sky-300 border border-sky-500/30 transition-colors inline-flex items-center gap-1.5'
+                    : 'text-xs font-bold px-3 py-1.5 rounded-md bg-slate-700/50 text-slate-400 hover:text-sky-300 transition-colors inline-flex items-center gap-1.5';
+            }
+            renderBulkResults(false);        // re-render so ROW_H is re-measured
+        };
 
         /* P2-10 / P2-11: one delegated listener replaces an inline onclick per copy button.
            The value now travels in a data attribute instead of being interpolated into a JS
@@ -2666,7 +2872,40 @@ This number is granted by the DNIC (National Direction of Civil Identification),
 
         window.handleBulkSearch = function(query) {
             window.currentBulkSearch = query.trim().toLowerCase();
+            syncSearchClearButton();
             renderBulkResults(false);
+        };
+
+        /* S5: the ✕ is only meaningful when there is something to clear. */
+        function syncSearchClearButton() {
+            const input = document.getElementById('bulk-search-input');
+            const btn = document.getElementById('bulk-search-clear');
+            if (!input || !btn) return;
+            const show = input.value.length > 0;
+            btn.classList.toggle('hidden', !show);
+            btn.classList.toggle('flex', show);
+        }
+
+        /* S5: three pieces of state have to move together or the UI starts lying.
+           Missing the pending debounce timer would let a queued handleBulkSearch() re-apply the
+           search a moment after the clear; missing window.currentBulkSearch would leave
+           updateExportButtonLabel() reporting a filtered row count for an unfiltered export.
+           renderBulkResults(false) — never true — because `true` re-runs the completion toast
+           and tears the timer widget down again. */
+        window.clearBulkSearch = function () {
+            const input = document.getElementById('bulk-search-input');
+            if (!input) return;
+            input.value = '';
+            if (typeof bulkSearchTimer !== 'undefined' && bulkSearchTimer) {
+                clearTimeout(bulkSearchTimer);
+                bulkSearchTimer = null;
+            }
+            window.currentBulkSearch = '';
+            syncSearchClearButton();
+            renderBulkResults(false);                       // repaints table + export label
+            const scroller = document.querySelector('.bulk-table-wrap');
+            if (scroller) scroller.scrollTop = 0;
+            input.focus();
         };
 
         window.applyBulkFilter = function(filterType) {
@@ -2683,11 +2922,34 @@ This number is granted by the DNIC (National Direction of Civil Identification),
         /* §3.5: the export button states exactly what the file will contain. This is the
            visible counterpart to defect E6 — a filtered export is no longer silent. */
         function updateExportButtonLabel() {
-            const exportBtn = document.querySelector('button[onclick="downloadBulkOutput()"]');
+            // Selecting by id rather than by the onclick attribute string — the old selector broke
+            // silently the moment anyone reformatted that attribute.
+            const exportBtn = document.getElementById('bulk-export-btn');
             if (!exportBtn) return;
             const filterActive = window.currentBulkFilter !== 'all' || !!window.currentBulkSearch;
             const n = filterActive ? (window.currentFilteredData || []).length : bulkOutputRows.length;
-            exportBtn.textContent = `Export ${n.toLocaleString('en-IN')} rows`;
+            exportBtn.textContent = `Export ${nfIN(n)} rows`;
+            updateExportFormatNote();
+        }
+
+        /* S7-3: format-specific truth, stated where the choice is made.
+           CSV and TXT are written correctly (every field is RFC-4180 quoted and the file carries
+           a UTF-8 BOM) — the loss happens inside Excel, which ignores quoting for type inference
+           and turns 0123456789 into the number 123456789 on a double-click open. That is not
+           fixable in the serialiser, so the honest move is to name it and point at the import
+           path that preserves it. */
+        function updateExportFormatNote() {
+            const sel = document.getElementById('bulk-export-format');
+            const note = document.getElementById('bulk-export-note');
+            if (!sel || !note) return;
+            const t = sel.value;
+            if (t === 'csv' || t === 'txt') {
+                note.className = 'text-[11px] mt-1 leading-relaxed text-amber-300/90';
+                note.innerHTML = '<b>Leading zeros:</b> this file stores them correctly, but double-clicking it opens Excel’s type guesser, which strips them. Open Excel first, then <b>Data → From Text/CSV</b> and set the UCIC, CTR Code and TIN columns to <b>Text</b>. Choose <b>.xlsx</b> to avoid the step entirely.';
+            } else {
+                note.className = 'text-[11px] mt-1 leading-relaxed text-slate-500';
+                note.textContent = 'Identifier columns are written as typed text, so leading zeros survive opening the file directly in Excel.';
+            }
         }
 
         function renderBulkResults(rebuildSummary = true) {
@@ -2706,8 +2968,11 @@ This number is granted by the DNIC (National Direction of Civil Identification),
                     const u = r['UCIC'];
                     if (u && !seenUcic.has(u)) {
                         seenUcic.add(u);
-                        if (r['Individual or Entity'] === 'Individual') ucicInd++;
-                        else if (r['Individual or Entity'] === 'Entity') ucicEnt++;
+                        // S2: read the canonical type, not the raw cell. Comparing the raw string
+                        // meant a file written as "INDIVIDUAL" scored 0 Ind / 0 Ent here even
+                        // once the validation itself was fixed.
+                        if (r.__type === 'Individual') ucicInd++;
+                        else if (r.__type === 'Entity') ucicEnt++;
                     }
                 }
                 const totalRows = bulkOutputRows.length, totalUniqueUCICs = seenUcic.size;
@@ -2721,15 +2986,34 @@ This number is granted by the DNIC (National Direction of Civil Identification),
                 const pctMod = totalRows > 0 ? ((fixed / totalRows) * 100).toFixed(1) : 0;
                 const pctFail = totalRows > 0 ? (((totalRows - valid - fixed) / totalRows) * 100).toFixed(1) : 0;
 
-                // Calculate efficiency metrics
-                // P2-2: guard the division — a sub-millisecond run used to render "Infinity rows/sec".
-                // P2-3: keep it numeric, so toLocaleString actually inserts separators
-                //       (.toFixed() returns a string, on which toLocaleString is a no-op).
+                /* ── S4-a: what "Speed" means. ─────────────────────────────────────────────────
+                   The old figure was `rowsProduced / processingTime`, where processingTime covers
+                   ONLY the processBulkRecord inner loop. It excluded XLSX.read(), which for a
+                   1-lakh workbook is 10–30 s and dominates the run. So a genuinely-correct
+                   ~172 ms inner loop over 1,00,000 rows rendered as "5,83,000 rows/sec" directly
+                   beside a Total of 30 s — a number larger than the dataset itself, which reads
+                   as a data error rather than a benchmark.
+
+                   Headline is now end-to-end: records produced ÷ wall-clock time for the whole
+                   run (read + validate). The inner-loop rate is kept as clearly-labelled
+                   secondary telemetry, measured against the rows that loop actually scanned.
+                   P2-2: the division is still guarded — a sub-millisecond run rendered Infinity.
+                   S4-c: the 1 ms floor matters now that performance.now() resolves below it.  */
                 const { readingTime, processingTime, totalTime } = getValidationTimings();
-                const rps = (bulkValidationTotalRows > 0 && processingTime > 0)
-                    ? Math.round(bulkValidationTotalRows / processingTime) : 0;
-                const rpsText = rps.toLocaleString('en-IN');
-                const efficiencyMessageFull = `Reading: ${readingTime.toFixed(2)}s | Validation: ${processingTime.toFixed(2)}s | Total: ${totalTime.toFixed(2)}s | Speed: ${rpsText} rows/sec`;
+                const safeSecs = s => Math.max(s, 0.001);          // never divide by zero
+                const rowsOut  = bulkValidationTotalRows;
+                const rowsScan = bulkValidationRowsScanned || rowsOut;
+
+                // Defensive cap: an end-to-end rate can never legitimately exceed the row count
+                // unless the run took under a second. Clamping keeps the tile self-consistent.
+                const overallRps = (rowsOut > 0 && totalTime > 0)
+                    ? Math.min(Math.round(rowsOut / safeSecs(totalTime)), rowsOut) : 0;
+                const engineRps = (rowsScan > 0 && processingTime > 0)
+                    ? Math.min(Math.round(rowsScan / safeSecs(processingTime)), rowsScan) : 0;
+
+                const overallRpsText = nfIN(overallRps);
+                const engineRpsText  = nfIN(engineRps);
+                const efficiencyMessageFull = `Read ${readingTime.toFixed(2)}s · Validate ${processingTime.toFixed(2)}s · Total ${totalTime.toFixed(2)}s · ${overallRpsText} rows/sec end-to-end`;
 
                 // Display efficiency as toast notification
                 showToast(`✓ Complete: ${efficiencyMessageFull}`, false);
@@ -2749,21 +3033,24 @@ This number is granted by the DNIC (National Direction of Civil Identification),
                             <div>
                                 <div class="text-[10px] text-slate-400 uppercase tracking-widest mb-1 font-bold">Data Quality</div>
                                 <div class="text-4xl font-bold leading-none ${scoreColor}">${qualityScore}%</div>
-                                <span class="text-xs text-slate-400 mt-2 block">${finalValid.toLocaleString()} of ${totalRows.toLocaleString()} rows pass OECD structure rules</span>
+                                <span class="text-xs text-slate-400 mt-2 block">${nfIN(finalValid)} of ${nfIN(totalRows)} rows pass OECD structure rules</span>
                             </div>
                             <div class="flex flex-wrap items-center gap-2 text-[11px] font-mono">
                                 <span class="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-blue-500/10 border border-blue-500/30"><span class="text-slate-400">Read</span><span class="text-blue-300 font-bold">${readingTime.toFixed(1)}s</span></span>
                                 <span class="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-cyan-500/10 border border-cyan-500/30"><span class="text-slate-400">Validated</span><span class="text-cyan-300 font-bold">${processingTime.toFixed(1)}s</span></span>
                                 <span class="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-sky-500/10 border border-sky-500/30"><span class="text-slate-400">Total</span><span class="text-sky-300 font-bold">${totalTime.toFixed(1)}s</span></span>
-                                <span class="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-violet-500/10 border border-violet-500/30"><span class="text-slate-400">Speed</span><span class="text-violet-300 font-bold">${rpsText}</span><span class="text-slate-400">rows/sec</span></span>
+                                <span class="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-violet-500/10 border border-violet-500/30" title="Records produced divided by total wall-clock time for the whole run, including reading the workbook."><span class="text-slate-400">Throughput</span><span class="text-violet-300 font-bold">${overallRpsText}</span><span class="text-slate-400">rows/sec</span></span>
                             </div>
                         </div>
+                        <!-- S4-a: the inner-loop rate is real but secondary. Stating what it excludes,
+                             right next to the number, is what stops it being read as a total. -->
+                        <p class="text-[10px] text-slate-500 -mt-2 font-mono">Validation engine alone: ${engineRpsText} rows/sec across ${nfIN(rowsScan)} scanned rows — excludes workbook parsing.</p>
                         <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
-                            <div><div class="text-[10px] text-slate-400 uppercase tracking-widest mb-1 font-bold">Total Rows</div><div class="text-lg font-bold text-white mt-1">${totalRows.toLocaleString()}</div></div>
-                            <div><div class="text-[10px] text-slate-400 uppercase tracking-widest mb-1 font-bold">Unique UCICs</div><div class="text-lg font-bold text-sky-400 leading-tight mt-1">${totalUniqueUCICs.toLocaleString()} <span class="text-[11px] text-slate-400 font-normal block mt-0.5">${ucicInd} Ind, ${ucicEnt} Ent</span></div></div>
-                            <div><div class="text-[10px] text-slate-400 uppercase tracking-widest mb-1 font-bold">Base Validation</div><div class="text-lg font-bold text-emerald-400 leading-tight mt-1">${valid.toLocaleString()} Pass <span class="text-[11px] text-rose-300 font-normal block mt-0.5">${(totalRows - valid).toLocaleString()} Fail</span></div></div>
-                            <div><div class="text-[10px] text-slate-400 uppercase tracking-widest mb-1 font-bold">Modifications</div><div class="text-lg font-bold text-amber-400 mt-1">${fixed.toLocaleString()}</div></div>
-                            <div><div class="text-[10px] text-slate-400 uppercase tracking-widest mb-1 font-bold">Valid Post-Mod</div><div class="text-lg font-bold text-emerald-400 mt-1">${validAfterMod.toLocaleString()}</div></div>
+                            <div><div class="text-[10px] text-slate-400 uppercase tracking-widest mb-1 font-bold">Total Rows</div><div class="text-lg font-bold text-white mt-1">${nfIN(totalRows)}</div></div>
+                            <div><div class="text-[10px] text-slate-400 uppercase tracking-widest mb-1 font-bold">Unique UCICs</div><div class="text-lg font-bold text-sky-400 leading-tight mt-1">${nfIN(totalUniqueUCICs)} <span class="text-[11px] text-slate-400 font-normal block mt-0.5">${nfIN(ucicInd)} Ind, ${nfIN(ucicEnt)} Ent</span></div></div>
+                            <div><div class="text-[10px] text-slate-400 uppercase tracking-widest mb-1 font-bold">Base Validation</div><div class="text-lg font-bold text-emerald-400 leading-tight mt-1">${nfIN(valid)} Pass <span class="text-[11px] text-rose-300 font-normal block mt-0.5">${nfIN(totalRows - valid)} Fail</span></div></div>
+                            <div><div class="text-[10px] text-slate-400 uppercase tracking-widest mb-1 font-bold">Modifications</div><div class="text-lg font-bold text-amber-400 mt-1">${nfIN(fixed)}</div></div>
+                            <div><div class="text-[10px] text-slate-400 uppercase tracking-widest mb-1 font-bold">Valid Post-Mod</div><div class="text-lg font-bold text-emerald-400 mt-1">${nfIN(validAfterMod)}</div></div>
                         </div>
                         <div class="flex flex-col gap-2 pt-3 border-t border-white/10">
                             <div class="h-3 flex rounded-full overflow-hidden bg-slate-800 w-full">
@@ -2808,7 +3095,10 @@ This number is granted by the DNIC (National Direction of Civil Identification),
             /* ── P1-C: windowed virtual scroll. The DOM holds ≤ ~60 rows regardless of dataset
                size. The previous loop appended every filtered row 100 at a time behind a rAF,
                which at 10 lakh rows meant ~10,000 frames (~167 s) and ~2.5 crore nodes. ── */
-            const ROW_H = 37, OVERSCAN = 10;
+            // S3-a: `let`, because the real rendered height is measured from the DOM below and
+            // this constant is only the starting assumption.
+            let ROW_H = 37;
+            const OVERSCAN = 10;
             const scroller = document.querySelector('.bulk-table-wrap');
             const topPad = document.getElementById('bulk-pad-top');
             const botPad = document.getElementById('bulk-pad-bottom');
@@ -2828,33 +3118,133 @@ This number is granted by the DNIC (National Direction of Civil Identification),
                 return;
             }
 
-            const esc = s => String(s == null ? '' : s)
-                .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+            /* ── S3-b: a reusable row pool. ────────────────────────────────────────────────
+               The old paintWindow() rebuilt an HTML string and assigned preview.innerHTML on
+               EVERY scroll frame. Each ~60-row window carried 9 cells plus up to 3 copy widgets
+               with their own inline <svg><path>, so the browser parsed, constructed and styled
+               roughly 1,500–1,800 nodes per frame — ~100k nodes/second during a sustained
+               scroll, far past what Blink can keep off the main thread.
 
-            const badge = v => !v ? ''
-                : (v.includes('Invalid') ? '<span class="px-2 py-1 rounded bg-rose-500/20 text-rose-300 border border-rose-500/30 text-[10px] uppercase font-bold tracking-wider">Invalid</span>'
-                : v.includes('Valid')    ? '<span class="px-2 py-1 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[10px] uppercase font-bold tracking-wider">Valid</span>'
-                : esc(v));
+               The pool builds those nodes ONCE. Painting a window afterwards is pure text
+               assignment on existing nodes: no parsing, no node churn, no style recalculation
+               beyond the changed text. The icon is a <use> reference to a single <symbol>
+               defined near the top of <body>, so each copy button is 2 nodes instead of 3+. */
+            const COL_KEYS = [
+                'UCIC', 'Individual or Entity', 'Country of Tax Residence', 'CTR Code', 'TIN Value',
+                'TIN validation remarks', 'TIN Modification Remarks', 'TIN Value Modified',
+                'TIN validation remarks on Modified TIN value'
+            ];
+            const COPY_COLS  = new Set([0, 4, 7]);   // UCIC, TIN Value, Modified TIN
+            const BADGE_COLS = new Set([5, 8]);      // the two validation-remark columns
 
-            // P2-11 / A-9: data-copy + one delegated listener replaces an inline onclick per
-            // cell, and focus:opacity-100 makes the button reachable by keyboard.
-            const copyCell = v => !v ? '' :
-                `<div class="group flex items-center gap-2 font-mono"><span>${esc(v)}</span>` +
-                `<button type="button" data-copy="${esc(v)}" aria-label="Copy ${esc(v)}" class="opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity p-1 text-slate-400 hover:text-white bg-white/5 rounded">` +
-                `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg></button></div>`;
+            /* S3-e: character counts each column can show before the ellipsis appears, derived
+               from the px widths in the stylesheet less padding (and less the copy button on the
+               three copy columns). Past these, the cell gets a `title` so the full value is one
+               hover away. Measuring scrollWidth per cell would be exact but forces a layout read
+               on every cell on every frame — precisely the cost this rewrite removed. */
+            const TITLE_AT = [19, 13, 19, 12, 21, 999, 42, 20, 999];
+            const TITLE_AT_EXPANDED = [57, 39, 57, 36, 63, 999, 126, 60, 999];   // 3 lines
 
-            /* Browsers clamp scrollable height (Blink: ~33,554,432 px). At 37 px per row that
+            const BADGE_CLS = {
+                Invalid: 'px-2 py-1 rounded bg-rose-500/20 text-rose-300 border border-rose-500/30 text-[10px] uppercase font-bold tracking-wider',
+                Valid:   'px-2 py-1 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[10px] uppercase font-bold tracking-wider',
+                Plain:   'text-slate-300'
+            };
+
+            function buildPoolRow() {
+                const tr = document.createElement('tr');
+                tr.__cells = [];
+                for (let c = 0; c < 9; c++) {
+                    const td = document.createElement('td');
+                    td.className = 'px-3 py-2 whitespace-nowrap text-slate-300 align-middle';
+                    const cell = { td };
+                    if (COPY_COLS.has(c)) {
+                        const span = document.createElement('span');
+                        span.className = 'tin-cell-text font-mono';
+                        const holder = document.createElement('span');
+                        holder.className = 'tin-copy';
+                        const btn = document.createElement('button');
+                        btn.type = 'button';
+                        btn.className = 'p-1 text-slate-400 hover:text-white bg-white/5 rounded';
+                        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+                        svg.setAttribute('class', 'w-3.5 h-3.5');
+                        svg.setAttribute('aria-hidden', 'true');
+                        const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+                        use.setAttribute('href', '#ico-copy');
+                        svg.appendChild(use);
+                        btn.appendChild(svg);
+                        holder.appendChild(btn);
+                        td.appendChild(span);
+                        td.appendChild(holder);
+                        cell.span = span; cell.holder = holder; cell.btn = btn;
+                    } else if (BADGE_COLS.has(c)) {
+                        const span = document.createElement('span');
+                        td.appendChild(span);
+                        cell.span = span;
+                    } else {
+                        const span = document.createElement('span');
+                        span.className = 'tin-cell-text';
+                        td.appendChild(span);
+                        cell.span = span;
+                    }
+                    tr.appendChild(td);
+                    tr.__cells.push(cell);
+                }
+                return tr;
+            }
+
+            function fillPoolRow(tr, r) {
+                const cells = tr.__cells;
+                const limits = bulkRowsExpanded ? TITLE_AT_EXPANDED : TITLE_AT;
+                for (let c = 0; c < 9; c++) {
+                    const cell = cells[c];
+                    const v = r[COL_KEYS[c]] || '';
+                    if (BADGE_COLS.has(c)) {
+                        if (!v) { cell.span.className = ''; cell.span.textContent = ''; }
+                        else if (v.indexOf('Invalid') !== -1) { cell.span.className = BADGE_CLS.Invalid; cell.span.textContent = 'Invalid'; }
+                        else if (v.indexOf('Valid')   !== -1) { cell.span.className = BADGE_CLS.Valid;   cell.span.textContent = 'Valid'; }
+                        else { cell.span.className = BADGE_CLS.Plain; cell.span.textContent = v; }
+                        // The badge is a fixed word, but the underlying remark is the useful detail.
+                        if (v) cell.td.title = v; else cell.td.removeAttribute('title');
+                        continue;
+                    }
+
+                    cell.span.textContent = v;
+                    // S3-e: every text column now advertises its full value when clipped, not just
+                    // the plain ones — UCIC, TIN and Modified TIN were the columns being cut off.
+                    if (v.length > limits[c]) cell.td.title = v; else cell.td.removeAttribute('title');
+
+                    if (COPY_COLS.has(c)) {
+                        if (v) {
+                            cell.holder.style.display = '';
+                            cell.btn.dataset.copy = v;                 // read by the delegated listener
+                            cell.btn.setAttribute('aria-label', 'Copy ' + v);
+                        } else {
+                            cell.holder.style.display = 'none';
+                            delete cell.btn.dataset.copy;
+                        }
+                    }
+                }
+            }
+
+            /* Browsers clamp scrollable height (Blink: ~33,554,432 px). At ~37 px per row that
                ceiling is hit around 9.07 lakh rows — below the 10 lakh target — and everything
                past it becomes unreachable by scrolling. Above the ceiling the spacers are
                compressed by `scale` and the row index is derived from the scroll fraction
                instead of the raw offset. When scale === 1 the arithmetic below reduces exactly
                to floor(scrollTop / ROW_H), so nothing changes for ordinary datasets. */
             const MAX_SCROLL_PX = 30000000;
-            const VIRTUAL_H = Math.min(filteredRows.length * ROW_H, MAX_SCROLL_PX);
-            const scale = VIRTUAL_H / Math.max(1, filteredRows.length * ROW_H);
+            let VIRTUAL_H = 0, scale = 1;
+            function recomputeMetrics() {
+                VIRTUAL_H = Math.min(filteredRows.length * ROW_H, MAX_SCROLL_PX);
+                scale = VIRTUAL_H / Math.max(1, filteredRows.length * ROW_H);
+            }
+            recomputeMetrics();
 
-            function paintWindow() {
+            const pool = [];
+            let lastFirst = -1, lastCount = -1, measured = false;
+
+            function paintWindow(force) {
                 try {
                     const clientH = scroller.clientHeight;
                     const visible = Math.max(1, Math.ceil(clientH / ROW_H));
@@ -2862,28 +3252,39 @@ This number is granted by the DNIC (National Direction of Civil Identification),
                     const maxScrollTop = Math.max(1, VIRTUAL_H - clientH);
                     const frac = Math.min(1, Math.max(0, scroller.scrollTop / maxScrollTop));
                     const first = Math.max(0, Math.round(frac * maxFirst) - OVERSCAN);
-                    const count = visible + OVERSCAN * 2;
-                    const last  = Math.min(filteredRows.length, first + count);
-                    let html = '';
-                    for (let i = first; i < last; i++) {
-                        const r = filteredRows[i];
-                        html += '<tr style="height:' + ROW_H + 'px">'
-                          + '<td class="px-4 py-2 whitespace-nowrap text-slate-300">' + copyCell(r['UCIC']) + '</td>'
-                          + '<td class="px-4 py-2 whitespace-nowrap text-slate-300">' + esc(r['Individual or Entity']) + '</td>'
-                          + '<td class="px-4 py-2 whitespace-nowrap text-slate-300">' + esc(r['Country of Tax Residence']) + '</td>'
-                          + '<td class="px-4 py-2 whitespace-nowrap text-slate-300">' + esc(r['CTR Code']) + '</td>'
-                          + '<td class="px-4 py-2 whitespace-nowrap text-slate-300">' + copyCell(r['TIN Value']) + '</td>'
-                          + '<td class="px-4 py-2 whitespace-nowrap text-slate-300">' + badge(r['TIN validation remarks']) + '</td>'
-                          + '<td class="px-4 py-2 whitespace-nowrap text-slate-300">' + esc(r['TIN Modification Remarks']) + '</td>'
-                          + '<td class="px-4 py-2 whitespace-nowrap text-slate-300">' + copyCell(r['TIN Value Modified']) + '</td>'
-                          + '<td class="px-4 py-2 whitespace-nowrap text-slate-300">' + badge(r['TIN validation remarks on Modified TIN value']) + '</td>'
-                          + '</tr>';
+                    const count = Math.min(filteredRows.length - first, visible + OVERSCAN * 2);
+
+                    /* S3-b: the single highest-value line here. A trackpad or smooth-scroll wheel
+                       fires many events per rendered row; without this the pool was refilled on
+                       every one of them for a window that had not actually changed. */
+                    if (!force && first === lastFirst && count === lastCount) return;
+                    lastFirst = first; lastCount = count;
+
+                    while (pool.length < count) { const tr = buildPoolRow(); pool.push(tr); preview.appendChild(tr); }
+                    for (let i = 0; i < pool.length; i++) {
+                        if (i < count) { fillPoolRow(pool[i], filteredRows[first + i]); pool[i].style.display = ''; }
+                        else pool[i].style.display = 'none';
                     }
-                    const renderedPx = (last - first) * ROW_H;
+
+                    const renderedPx = count * ROW_H;
                     const topPx = Math.round(first * ROW_H * scale);
                     topPad.style.height = topPx + 'px';
                     botPad.style.height = Math.max(0, Math.round(VIRTUAL_H - renderedPx - topPx)) + 'px';
-                    preview.innerHTML = html;                 // ONE parse, ≤ 60 rows
+
+                    /* S3-a: trust the DOM, not the constant. `height` on a td is a MINIMUM; browser
+                       zoom, a user font-size override or a future style change can all push the real
+                       row height off 37 px, and any mismatch makes the content drift against the
+                       scrollbar by (real − assumed) px per row. Measure once and re-derive. */
+                    if (!measured && count > 0) {
+                        measured = true;
+                        const h = pool[0].getBoundingClientRect().height;
+                        if (h > 1 && Math.abs(h - ROW_H) > 0.5) {
+                            ROW_H = h;
+                            recomputeMetrics();
+                            lastFirst = -1; lastCount = -1;
+                            paintWindow(true);
+                        }
+                    }
                 } catch (err) {
                     console.error('Preview render failed:', err);
                     preview.innerHTML = '<tr><td colspan="9" class="text-center py-8 text-rose-300">Preview unavailable. Your results are intact — use Export results to download them.</td></tr>';
@@ -2891,12 +3292,12 @@ This number is granted by the DNIC (National Direction of Civil Identification),
             }
 
             let raf = 0;
-            scroller._tinScrollHandler = () => { if (!raf) raf = requestAnimationFrame(() => { raf = 0; paintWindow(); }); };
+            scroller._tinScrollHandler = () => { if (!raf) raf = requestAnimationFrame(() => { raf = 0; paintWindow(false); }); };
             scroller.addEventListener('scroll', scroller._tinScrollHandler, { passive: true });
             scroller.scrollTop = 0;
-            paintWindow();
+            paintWindow(true);
             // A-6: announce the new result count after each render.
-            if (liveRegion) liveRegion.textContent = `${filteredRows.length.toLocaleString('en-IN')} rows shown.`;
+            if (liveRegion) liveRegion.textContent = `${nfIN(filteredRows.length)} rows shown.`;
         }
 
         /* ── P1-E: safe download primitive. Deferring the revoke fixes the cancelled-download
@@ -2912,10 +3313,387 @@ This number is granted by the DNIC (National Direction of Civil Identification),
         }
 
         const SANITISE = /[\x00-\x1F\x7F-\x9F]/g;
-        const XLSX_ROW_LIMIT = 100000;                          // measured-safe ceiling; 2 lakh OOMs
+
+        /* ════════════════════════════════════════════════════════════════════════════════════
+           S1 — BLANK INPUT TEMPLATE
+           A real .xlsx, built offline and embedded as base64 so the single-file deployment keeps
+           working with no network and no server. It is a genuine Excel package rather than a
+           SheetJS-generated one because the two things that matter most here — a real
+           data-validation dropdown on the taxpayer-type column, and Text (@) number formats on
+           the five input columns — are exactly what SheetJS CE cannot reliably write.
+
+           The Text formats are the entire point: Excel discards a leading zero the moment a
+           value is typed into a General cell, before this tool ever sees the file. No amount of
+           export-side work recovers it. Pre-formatting the columns is the only real fix.
+           ════════════════════════════════════════════════════════════════════════════════════ */
+        const BULK_TEMPLATE_B64 = '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';
+
+        function b64ToBytes(b64) {
+            const bin = atob(b64);
+            const out = new Uint8Array(bin.length);
+            for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+            return out;
+        }
+
+        window.downloadBulkTemplate = function () {
+            const btn = document.getElementById('bulk-template-btn');
+            try {
+                const bytes = b64ToBytes(BULK_TEMPLATE_B64);
+                /* Drift guard: the template ships as an opaque blob, so if someone edits
+                   BULK_HEADERS without rebuilding it the two silently disagree and every upload
+                   is rejected with a confusing "missing header" error. Parsing our own 5 KB file
+                   on click is cheap insurance. Console-only — never block the download. */
+                if (window.XLSX) {
+                    try {
+                        const wb = XLSX.read(bytes, { type: 'array' });
+                        const ws = wb.Sheets[wb.SheetNames[0]];
+                        const head = (XLSX.utils.sheet_to_json(ws, { header: 1 })[0] || []).map(normaliseBulkHeader);
+                        const missing = BULK_HEADERS.filter(h => head.indexOf(normaliseBulkHeader(h)) === -1);
+                        if (missing.length) console.error('Embedded template is out of sync with BULK_HEADERS. Missing:', missing);
+                    } catch (e) { console.warn('Template self-check skipped:', e); }
+                }
+                triggerDownload(
+                    new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }),
+                    'OECD_TIN_Bulk_Template.xlsx'
+                );
+                showToast('Template downloaded. Columns A–E are pre-formatted as text.');
+            } catch (err) {
+                console.error('Template download failed:', err);
+                showToast('The template could not be generated. Reload the page and try again.', true);
+            } finally {
+                if (btn) btn.blur();
+            }
+        };
+
+        /* ════════════════════════════════════════════════════════════════════════════════════
+           S6 — STREAMING XLSX WRITER
+           Replaces the hard 1-lakh refusal. The old path was SheetJS: rows.map() built a second
+           full copy of the dataset, json_to_sheet built a third as ~9 million individual cell
+           objects, and XLSX.write() then serialised the whole workbook into one ArrayBuffer.
+           At 10 lakh rows that is several GB of peak heap — a tab OOM, not a slow export.
+
+           An .xlsx is just a ZIP of XML parts, so we write the ZIP ourselves:
+             • sheet XML is generated in 5,000-row chunks and fed straight into the compressor,
+               so no chunk is ever retained;
+             • compression uses the browser-native CompressionStream('deflate-raw') — no
+               third-party library, so the single-file constraint is untouched. Where that is
+               unavailable we fall back to STORE (method 0), which is still a valid ZIP;
+             • CRC-32 is accumulated per chunk with a standard table;
+             • data is split across sheets at Excel's own hard limit of 1,048,576 rows, which no
+               library or architecture can raise — it is a file-format constant.
+
+           Cells are written as t="inlineStr", which is what makes Issue 7 impossible by
+           construction: an inline string cannot be re-interpreted as a number by Excel. Style 1
+           adds the Text (@) number format and quotePrefix so the identifier columns also avoid
+           the "number stored as text" warning triangles.
+           ════════════════════════════════════════════════════════════════════════════════════ */
+        const XLSX_SHEET_ROW_LIMIT = 1048576;                   // Excel hard limit, header included
+        const XLSB_ROW_LIMIT = 100000;                          // SheetJS in-memory path; 2 lakh OOMs
+
+        const CRC_TABLE = (() => {
+            const t = new Uint32Array(256);
+            for (let n = 0; n < 256; n++) {
+                let c = n;
+                for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+                t[n] = c >>> 0;
+            }
+            return t;
+        })();
+        function crc32Update(crc, bytes) {
+            let c = crc ^ 0xFFFFFFFF;
+            for (let i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
+            return (c ^ 0xFFFFFFFF) >>> 0;
+        }
+
+        const XML_ESC = /[&<>"\x00-\x08\x0B\x0C\x0E-\x1F]/g;
+        const XML_MAP = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' };
+        // Control characters are illegal in XML 1.0 even when escaped — they must be dropped.
+        function xmlEsc(s) { return String(s == null ? '' : s).replace(XML_ESC, ch => XML_MAP[ch] || ''); }
+
+        const hasCompressionStream = (typeof CompressionStream !== 'undefined');
+
+        /* One ZIP entry. `chunkSource` is an async generator of strings so the caller never has
+           to materialise the whole part. Returns the deflated (or stored) bytes plus the header
+           fields the central directory needs. */
+        async function zipEntryFromChunks(name, chunkSource) {
+            const enc = new TextEncoder();
+            let crc = 0, rawSize = 0;
+            const compressedParts = [];
+            let compSize = 0;
+
+            if (hasCompressionStream) {
+                const cs = new CompressionStream('deflate-raw');
+                const writer = cs.writable.getWriter();
+                const reader = cs.readable.getReader();
+                const pump = (async () => {
+                    for (;;) {
+                        const { value, done } = await reader.read();
+                        if (done) break;
+                        compressedParts.push(value);
+                        compSize += value.length;
+                    }
+                })();
+                for await (const chunk of chunkSource) {
+                    const bytes = enc.encode(chunk);
+                    crc = crc32Update(crc, bytes);
+                    rawSize += bytes.length;
+                    await writer.write(bytes);
+                }
+                await writer.close();
+                await pump;
+                return { name, crc, rawSize, compSize, method: 8, parts: compressedParts };
+            }
+
+            for await (const chunk of chunkSource) {
+                const bytes = enc.encode(chunk);
+                crc = crc32Update(crc, bytes);
+                rawSize += bytes.length;
+                compressedParts.push(bytes);
+                compSize += bytes.length;
+            }
+            return { name, crc, rawSize, compSize, method: 0, parts: compressedParts };
+        }
+
+        function u16(v) { return [v & 0xFF, (v >>> 8) & 0xFF]; }
+        function u32(v) { return [v & 0xFF, (v >>> 8) & 0xFF, (v >>> 16) & 0xFF, (v >>> 24) & 0xFF]; }
+
+        /* Assembles local headers + data + central directory into one Blob. Blob accepts an
+           array of parts, and the browser is free to spill that to disk, so the peak JS heap
+           stays at roughly the compressed size rather than the uncompressed one. */
+        function buildZipBlob(entries) {
+            const enc = new TextEncoder();
+            const parts = [];
+            const central = [];
+            let offset = 0;
+
+            for (const e of entries) {
+                const nameBytes = enc.encode(e.name);
+                const local = [].concat(
+                    u32(0x04034b50), u16(20), u16(0), u16(e.method),
+                    u16(0), u16(0x21),                       // 1980-01-01, fixed for reproducibility
+                    u32(e.crc), u32(e.compSize), u32(e.rawSize),
+                    u16(nameBytes.length), u16(0)
+                );
+                parts.push(new Uint8Array(local), nameBytes);
+                for (const p of e.parts) parts.push(p);
+
+                central.push({ e, nameBytes, offset });
+                offset += local.length + nameBytes.length + e.compSize;
+            }
+
+            const cdStart = offset;
+            let cdSize = 0;
+            for (const c of central) {
+                const rec = [].concat(
+                    u32(0x02014b50), u16(20), u16(20), u16(0), u16(c.e.method),
+                    u16(0), u16(0x21),
+                    u32(c.e.crc), u32(c.e.compSize), u32(c.e.rawSize),
+                    u16(c.nameBytes.length), u16(0), u16(0), u16(0), u16(0),
+                    u32(0), u32(c.offset)
+                );
+                parts.push(new Uint8Array(rec), c.nameBytes);
+                cdSize += rec.length + c.nameBytes.length;
+            }
+
+            const end = [].concat(
+                u32(0x06054b50), u16(0), u16(0),
+                u16(central.length), u16(central.length),
+                u32(cdSize), u32(cdStart), u16(0)
+            );
+            parts.push(new Uint8Array(end));
+            return new Blob(parts, { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+        }
+
+        function colRef(i) {                                    // 1 -> A
+            let n = i, s = '';
+            while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = (n - m) / 26 | 0; }
+            return s;
+        }
+
+        /* Style ids written by the sheet generator, matching xlsxStylesXml() below:
+             1 = Text(@) + quotePrefix  → identifier columns (UCIC, CTR Code, TIN, Modified TIN)
+             2 = header
+             5 = Text(@)                → every other data column                                  */
+        const XLSX_ID_COLS = new Set([1, 4, 5, 8]);             // 1-based: UCIC, CTR Code, TIN Value, TIN Value Modified
+
+        function xlsxStylesXml() {
+            return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+                '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+                '<fonts count="2"><font><sz val="11"/><color theme="1"/><name val="Calibri"/><family val="2"/><scheme val="minor"/></font>' +
+                '<font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/><family val="2"/><scheme val="minor"/></font></fonts>' +
+                '<fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>' +
+                '<fill><patternFill patternType="solid"><fgColor rgb="FF1E3A8A"/><bgColor indexed="64"/></patternFill></fill></fills>' +
+                '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>' +
+                '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>' +
+                '<cellXfs count="6">' +
+                '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>' +
+                '<xf numFmtId="49" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1" quotePrefix="1"/>' +
+                '<xf numFmtId="49" fontId="1" fillId="2" borderId="0" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf>' +
+                '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>' +
+                '<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>' +
+                '<xf numFmtId="49" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>' +
+                '</cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles><dxfs count="0"/></styleSheet>';
+        }
+
+        const XLSX_COL_WIDTHS = [16, 22, 28, 11, 22, 26, 46, 22, 38];
+
+        /* Async generator: yields the sheet XML for one slice of rows, a chunk at a time.
+           Yielding to the browser between chunks is what keeps the UI alive without a Worker —
+           the same cooperative-scheduling approach the validation loop already uses. Moving this
+           to a Worker was considered and rejected: structured-cloning 10 lakh row objects across
+           the boundary would duplicate the very memory this rewrite exists to avoid. */
+        async function* xlsxSheetChunks(rows, startIndex, endIndex, onProgress) {
+            const lastCol = colRef(BULK_HEADERS.length);
+            const rowCount = (endIndex - startIndex) + 1;       // +1 for the header row
+            yield '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+                '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+                '<dimension ref="A1:' + lastCol + rowCount + '"/>' +
+                '<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>' +
+                '<sheetFormatPr defaultRowHeight="15"/><cols>' +
+                BULK_HEADERS.map((_, i) =>
+                    '<col min="' + (i + 1) + '" max="' + (i + 1) + '" width="' + XLSX_COL_WIDTHS[i] +
+                    '" style="' + (XLSX_ID_COLS.has(i + 1) ? 1 : 5) + '" customWidth="1"/>').join('') +
+                '</cols><sheetData>';
+
+            // Header row
+            let head = '<row r="1" ht="28" customHeight="1">';
+            for (let c = 0; c < BULK_HEADERS.length; c++) {
+                head += '<c r="' + colRef(c + 1) + '1" s="2" t="inlineStr"><is><t xml:space="preserve">' +
+                        xmlEsc(BULK_HEADERS[c]) + '</t></is></c>';
+            }
+            yield head + '</row>';
+
+            const CHUNK = 5000;
+            let outRow = 2;
+            for (let i = startIndex; i < endIndex; i += CHUNK) {
+                const stop = Math.min(i + CHUNK, endIndex);
+                let buf = '';
+                for (let j = i; j < stop; j++, outRow++) {
+                    const r = rows[j];
+                    buf += '<row r="' + outRow + '">';
+                    for (let c = 0; c < BULK_HEADERS.length; c++) {
+                        const v = r[BULK_HEADERS[c]];
+                        if (v === '' || v == null) continue;    // skip empties: smaller file, same data
+                        buf += '<c r="' + colRef(c + 1) + outRow + '" s="' + (XLSX_ID_COLS.has(c + 1) ? 1 : 5) +
+                               '" t="inlineStr"><is><t xml:space="preserve">' + xmlEsc(v) + '</t></is></c>';
+                    }
+                    buf += '</row>';
+                }
+                yield buf;
+                if (onProgress) onProgress(stop);
+                await yieldToBrowser();
+            }
+            yield '</sheetData><pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/></worksheet>';
+        }
+
+        async function* singleChunk(text) { yield text; }
+
+        function auditRows(rows) {
+            let valid = 0, fixed = 0;
+            for (const r of bulkOutputRows) {
+                if (r['TIN validation remarks'] === 'TIN structure is Valid') valid++;
+                if (r['TIN Value Modified'] !== '') fixed++;
+            }
+            let operator = 'Authorized User';
+            try { operator = sessionStorage.getItem('tin_dashboard_user') || operator; } catch (e) {}
+            return [
+                ['Metric', 'Value'],
+                ['Report Generated', new Date().toLocaleString('en-IN')],
+                ['Operator', operator],
+                ['Source File', bulkSourceName],
+                ['Validation Engine', 'OECD Global TIN Dataset'],
+                ['Rows in this export', String(rows.length)],
+                ['Filter applied', window.currentBulkFilter + (window.currentBulkSearch ? ' / search "' + window.currentBulkSearch + '"' : '')],
+                ['Total Records Processed', String(bulkOutputRows.length)],
+                ['Valid Records (Base)', String(valid)],
+                ['Invalid Records (Base)', String(bulkOutputRows.length - valid)],
+                ['Modifications Proposed', String(fixed)],
+                ['Sheets used for data', String(Math.max(1, Math.ceil(rows.length / (XLSX_SHEET_ROW_LIMIT - 1))))],
+                ['Excel row limit per sheet', nfIN(XLSX_SHEET_ROW_LIMIT)]
+            ];
+        }
+
+        function auditSheetXml(rows) {
+            const data = auditRows(rows);
+            let xml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+                '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+                '<dimension ref="A1:B' + data.length + '"/><sheetViews><sheetView workbookViewId="0"/></sheetViews>' +
+                '<sheetFormatPr defaultRowHeight="15"/>' +
+                '<cols><col min="1" max="1" width="30" customWidth="1"/><col min="2" max="2" width="52" customWidth="1"/></cols><sheetData>';
+            for (let i = 0; i < data.length; i++) {
+                const s = i === 0 ? '4' : '0';
+                xml += '<row r="' + (i + 1) + '">' +
+                       '<c r="A' + (i + 1) + '" s="' + s + '" t="inlineStr"><is><t xml:space="preserve">' + xmlEsc(data[i][0]) + '</t></is></c>' +
+                       '<c r="B' + (i + 1) + '" s="' + s + '" t="inlineStr"><is><t xml:space="preserve">' + xmlEsc(data[i][1]) + '</t></is></c></row>';
+            }
+            return xml + '</sheetData><pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/></worksheet>';
+        }
+
+        /* `perSheetOverride` exists so the sheet-splitting path can be exercised without
+           materialising 10 lakh+ rows. Production callers omit it. */
+        async function buildStreamingXlsx(rows, onProgress, perSheetOverride) {
+            const perSheet = perSheetOverride || (XLSX_SHEET_ROW_LIMIT - 1);   // one row is the header
+            const sheetCount = Math.max(1, Math.ceil(rows.length / perSheet));
+            const sheetNames = [];
+            const entries = [];
+
+            for (let s = 0; s < sheetCount; s++) {
+                const from = s * perSheet;
+                const to = Math.min(from + perSheet, rows.length);
+                sheetNames.push(sheetCount === 1 ? 'Validated_Data' : 'Validated_Data_' + (s + 1));
+                entries.push(await zipEntryFromChunks(
+                    'xl/worksheets/sheet' + (s + 1) + '.xml',
+                    xlsxSheetChunks(rows, from, to, onProgress ? (n => onProgress(n)) : null)
+                ));
+            }
+            const auditIdx = sheetCount + 1;
+            sheetNames.push('Audit_Trail');
+            entries.push(await zipEntryFromChunks('xl/worksheets/sheet' + auditIdx + '.xml', singleChunk(auditSheetXml(rows))));
+
+            const allSheets = sheetNames.length;
+            let overrides = '';
+            for (let i = 1; i <= allSheets; i++) {
+                overrides += '<Override PartName="/xl/worksheets/sheet' + i + '.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>';
+            }
+            const contentTypes = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+                '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
+                '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
+                '<Default Extension="xml" ContentType="application/xml"/>' +
+                '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>' +
+                overrides +
+                '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>';
+
+            const rootRels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+                '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+                '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>';
+
+            let sheetTags = '', wbRels = '';
+            for (let i = 0; i < allSheets; i++) {
+                sheetTags += '<sheet name="' + xmlEsc(sheetNames[i]) + '" sheetId="' + (i + 1) + '" r:id="rId' + (i + 1) + '"/>';
+                wbRels += '<Relationship Id="rId' + (i + 1) + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet' + (i + 1) + '.xml"/>';
+            }
+            wbRels += '<Relationship Id="rId' + (allSheets + 1) + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>';
+
+            const workbook = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+                '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
+                '<sheets>' + sheetTags + '</sheets></workbook>';
+
+            const workbookRels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+                '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' + wbRels + '</Relationships>';
+
+            // [Content_Types].xml must be the first entry in the archive.
+            const head = [
+                await zipEntryFromChunks('[Content_Types].xml', singleChunk(contentTypes)),
+                await zipEntryFromChunks('_rels/.rels', singleChunk(rootRels)),
+                await zipEntryFromChunks('xl/workbook.xml', singleChunk(workbook)),
+                await zipEntryFromChunks('xl/_rels/workbook.xml.rels', singleChunk(workbookRels)),
+                await zipEntryFromChunks('xl/styles.xml', singleChunk(xlsxStylesXml()))
+            ];
+            return { blob: buildZipBlob(head.concat(entries)), sheetCount, sheetNames };
+        }
 
         window.downloadBulkOutput = async function () {
-            const btn = document.querySelector('button[onclick="downloadBulkOutput()"]');
+            const btn = document.getElementById('bulk-export-btn');
             // E6: an active filter must export the filtered set; no filter must export everything.
             // The old `length > 0 ? filtered : all` silently exported the full dataset whenever a
             // filter matched zero rows, and silently exported a subset whenever one was active.
@@ -2932,8 +3710,12 @@ This number is granted by the DNIC (National Direction of Civil Identification),
             const stamp  = new Date().toISOString().slice(0, 10);
             const filename = `${bulkSourceName}_Export_${window.currentBulkFilter}_${stamp}.${type}`;
 
-            if ((type === 'xlsx' || type === 'xlsb') && dataToExport.length > XLSX_ROW_LIMIT) {   // E1
-                return showToast(`${dataToExport.length.toLocaleString()} rows exceeds the ${XLSX_ROW_LIMIT.toLocaleString()}-row limit for in-browser ${type.toUpperCase()}. Select .csv — it opens directly in Excel.`, true);
+            /* S6: the blanket 1-lakh refusal is gone for .xlsx — the streaming writer has no row
+               ceiling and splits across sheets at Excel's own limit. .xlsb still goes through
+               SheetJS's in-memory path, which genuinely does OOM, so it keeps an honest cap and
+               names the alternative instead of just refusing. */
+            if (type === 'xlsb' && dataToExport.length > XLSB_ROW_LIMIT) {
+                return showToast(`${nfIN(dataToExport.length)} rows exceeds the ${nfIN(XLSB_ROW_LIMIT)}-row limit for in-browser .xlsb. Choose .xlsx — it streams and has no row limit.`, true);
             }
 
             if (btn) { btn.disabled = true; btn.textContent = 'Preparing export…'; }
@@ -2941,7 +3723,17 @@ This number is granted by the DNIC (National Direction of Civil Identification),
                 if (type === 'csv' || type === 'txt') {
                     const blob = await buildDelimitedBlob(dataToExport, type === 'csv' ? ',' : '\t');
                     triggerDownload(blob, filename);
-                    showToast(`Export ready: ${dataToExport.length.toLocaleString()} rows.`);
+                    showToast(`Export ready: ${nfIN(dataToExport.length)} rows.`);
+                } else if (type === 'xlsx') {
+                    await yieldToBrowser();                     // let "Preparing export…" paint first
+                    const total = dataToExport.length;
+                    const { blob, sheetCount } = await buildStreamingXlsx(dataToExport, done => {
+                        if (btn) btn.textContent = `Writing ${nfIN(done)} of ${nfIN(total)}…`;
+                    });
+                    triggerDownload(blob, filename);
+                    showToast(sheetCount > 1
+                        ? `Export ready: ${nfIN(total)} rows across ${sheetCount} data sheets (Excel caps a sheet at ${nfIN(XLSX_SHEET_ROW_LIMIT)} rows) plus an audit trail.`
+                        : `Export ready: ${nfIN(total)} rows across 2 sheets.`);
                 } else {
                     await buildWorkbookAndDownload(dataToExport, type, filename);
                 }
@@ -2950,7 +3742,7 @@ This number is granted by the DNIC (National Direction of Civil Identification),
                 console.error('Export failed:', err);           // E8
                 const oom = err instanceof RangeError || /allocation|memory|heap|invalid string length/i.test(err.message || '');
                 showToast(oom
-                    ? `Not enough browser memory for ${dataToExport.length.toLocaleString()} rows. Use "Errors Only" to export a smaller slice, or split the source workbook.`
+                    ? `Not enough browser memory for ${nfIN(dataToExport.length)} rows. Use "Errors Only" to export a smaller slice, or split the source workbook.`
                     : `Export failed: ${err.message || 'unknown error'}. Try .csv format.`, true);
             } finally {
                 if (btn) { btn.disabled = false; updateExportButtonLabel(); }
@@ -2996,6 +3788,21 @@ This number is granted by the DNIC (National Direction of Civil Identification),
                 const ws = XLSX.utils.json_to_sheet(data, { header: BULK_HEADERS });
                 ws['!cols'] = [15, 15, 25, 10, 20, 25, 45, 20, 35].map(wch => ({ wch }));
 
+                /* S7-1: force the identifier columns to typed text.
+                   SheetJS already types a JS string as t:'s', but it writes no number format, so
+                   Excel renders the cell General, flags it "number stored as text", and a helpful
+                   user clicking "Convert to Number" destroys the leading zero. Setting z:'@'
+                   makes the Text format explicit and suppresses the warning. Column indices are
+                   0-based here: UCIC, CTR Code, TIN Value, TIN Value Modified. */
+                const idCols = [0, 3, 4, 7];
+                const range = XLSX.utils.decode_range(ws['!ref']);
+                for (let R = range.s.r + 1; R <= range.e.r; R++) {
+                    for (const C of idCols) {
+                        const cell = ws[XLSX.utils.encode_cell({ r: R, c: C })];
+                        if (cell && cell.v != null) { cell.t = 's'; cell.v = String(cell.v); cell.z = '@'; }
+                    }
+                }
+
                 let valid = 0, fixed = 0;
                 for (const r of bulkOutputRows) {
                     if (r['TIN validation remarks'] === 'TIN structure is Valid') valid++;
@@ -3021,12 +3828,23 @@ This number is granted by the DNIC (National Direction of Civil Identification),
 
                 const out = XLSX.write(wb, { bookType: type, type: 'array' });
                 triggerDownload(new Blob([out], { type: 'application/octet-stream' }), filename);
-                showToast(`Export ready: ${rows.length.toLocaleString()} rows across 2 sheets.`);
+                showToast(`Export ready: ${nfIN(rows.length)} rows across 2 sheets.`);
             } catch (err) {
-                console.error(`${type} export failed, falling back to CSV:`, err);
-                const blob = await buildDelimitedBlob(rows, ',');
-                triggerDownload(blob, filename.replace(/\.[^.]+$/, '.csv'));
-                showToast(`${type.toUpperCase()} export was not possible (${err.message || 'memory limit'}). A .csv file was downloaded instead.`, true);
+                /* S6/S7: .xlsb is the only remaining SheetJS path, so this fallback is now
+                   xlsb-only. Prefer .xlsx — it streams, has no row cap, and preserves typed text.
+                   Falling all the way back to .csv silently re-introduces the leading-zero
+                   problem, so the message says so instead of just reporting a format swap. */
+                console.error(`${type} export failed, falling back:`, err);
+                try {
+                    const { blob } = await buildStreamingXlsx(rows, null);
+                    triggerDownload(blob, filename.replace(/\.[^.]+$/, '.xlsx'));
+                    showToast(`.XLSB export was not possible (${err.message || 'memory limit'}). An .xlsx file was downloaded instead — leading zeros are preserved.`, true);
+                } catch (err2) {
+                    console.error('xlsx fallback also failed, using CSV:', err2);
+                    const blob = await buildDelimitedBlob(rows, ',');
+                    triggerDownload(blob, filename.replace(/\.[^.]+$/, '.csv'));
+                    showToast(`.XLSB export was not possible. A .csv file was downloaded instead — open it via Data → From Text/CSV and set the TIN columns to Text, or leading zeros will be lost.`, true);
+                }
             }
         }
         function setupBulkInterface() {
@@ -3053,13 +3871,25 @@ This number is granted by the DNIC (National Direction of Civil Identification),
 
             // P4-1: debounce the search. The old onkeyup re-filtered and re-rendered the entire
             // dataset on every keystroke — typing "SINGAPORE" was nine full passes.
+            // S5: the timer handle is module-scoped now so clearBulkSearch() can cancel a queued
+            // pass — otherwise the debounce fires after the clear and re-applies the search.
             const search = document.getElementById('bulk-search-input');
-            let searchTimer = null;
             search.addEventListener('input', e => {
-                clearTimeout(searchTimer);
+                clearTimeout(bulkSearchTimer);
                 const v = e.target.value;
-                searchTimer = setTimeout(() => handleBulkSearch(v), 250);
+                syncSearchClearButton();                        // instant, not debounced
+                bulkSearchTimer = setTimeout(() => handleBulkSearch(v), 250);
             });
+            // S5: Escape is the conventional shortcut for clearing a search field.
+            search.addEventListener('keydown', e => {
+                if (e.key === 'Escape' && search.value) { e.preventDefault(); clearBulkSearch(); }
+            });
+            syncSearchClearButton();
+
+            // S7-3: keep the leading-zero guidance in step with the selected format.
+            const fmt = document.getElementById('bulk-export-format');
+            if (fmt) fmt.addEventListener('change', updateExportFormatNote);
+            updateExportFormatNote();
 
             setupModeTabKeyboard();   // A-5
             try { if (localStorage.getItem('tin_theme') === 'light') toggleTheme(); } catch (e) {}
